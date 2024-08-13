@@ -13,9 +13,7 @@ from pyteomics.mass import std_aa_mass, calculate_mass, unimod
 from pyteomics.fasta import IndexedFASTA
 from rich.progress import track
 
-logging.basicConfig(
-    format="[%(asctime)s]%(levelname)s => %(message)s", level=logging.INFO
-)
+logging.basicConfig(format="[%(asctime)s]%(levelname)s => %(message)s", level=logging.INFO)
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +33,7 @@ class PSMHandler:
         """
 
         # initialize modification seeker
-        self.modification_seeker = _ModificationHandler(
+        self.modification_handler = _ModificationHandler(
             mass_error=mass_error,
             add_aa_combinations=aa_combinations,
             fasta_file=fasta_file,
@@ -54,7 +52,7 @@ class PSMHandler:
 
         for i, aa in enumerate(peptidoform.parsed_sequence):
             if aa[1] is not None:
-                locations.append(i + 1)
+                locations.append(i)
 
         return locations
 
@@ -69,13 +67,9 @@ class PSMHandler:
             return None
         else:
             if loc == "N-term":
-                new_peptidoform.properties["n_term"] = [
-                    proforma.process_tag_tokens(mod)
-                ]
+                new_peptidoform.properties["n_term"] = [proforma.process_tag_tokens(mod)]
             elif loc == "C-term":
-                new_peptidoform.properties["c_term"] = [
-                    proforma.process_tag_tokens(mod)
-                ]
+                new_peptidoform.properties["c_term"] = [proforma.process_tag_tokens(mod)]
             elif loc == "prepeptide":
                 new_peptidoform.parsed_sequence = [
                     (aa, None) for aa in mod
@@ -92,12 +86,16 @@ class PSMHandler:
                     logger.warning(f"IndexError for {peptidoform} at {loc} with {mod}")
                     raise IndexError("Localisation is not in peptide")
 
-                if mod in self.modification_seeker.aa_sub_dict.keys():
-                    if aa == self.modification_seeker.aa_sub_dict[mod][0]:
+                # If the modification is an amino acid substitution
+                if mod in self.modification_handler.aa_sub_dict.keys():
+                    if (
+                        aa == self.modification_handler.aa_sub_dict[mod][0]
+                    ):  # TODO named tuple so indexing is not necesary and more clear
                         new_peptidoform.parsed_sequence[loc] = (
-                            self.modification_seeker.aa_sub_dict[mod][1],
+                            self.modification_handler.aa_sub_dict[mod][1],
                             None,
                         )
+                # If the modification is a standard modification
                 else:
                     new_peptidoform.parsed_sequence[loc] = (
                         aa,
@@ -118,14 +116,15 @@ class PSMHandler:
     def _get_modified_peptidoforms(self, psm, keep=False, warn=True) -> list:
         """Get modified peptidoforms derived from 1 PSM"""
         modified_peptidoforms = []
-        modification_list = self.modification_seeker.localize_mass_shift(psm)
+        modification_list = self.modification_handler.localize_mass_shift(psm)
         if modification_list:
             for modification_tuple in modification_list:
+                new_proteoform = self._return_mass_shifted_peptidoform(
+                    modification_tuple, psm.peptidoform
+                )
                 new_psm = self._create_new_psm(
                     psm,
-                    self._return_mass_shifted_peptidoform(
-                        modification_tuple, psm.peptidoform
-                    ),
+                    new_proteoform,
                 )
                 if new_psm is not None:
                     modified_peptidoforms.append(new_psm)
@@ -139,9 +138,7 @@ class PSMHandler:
 
     def get_modified_peptidoforms_list(self, psm, keep=False, warn=True) -> PSMList:
         """Get modified peptidoforms derived from 1 PSM in a PSMList"""
-        modified_peptidoforms = self._get_modified_peptidoforms(
-            psm, keep=keep, warn=warn
-        )
+        modified_peptidoforms = self._get_modified_peptidoforms(psm, keep=keep, warn=warn)
         return PSMList(psm_list=modified_peptidoforms)
 
     def add_modified_psms(
@@ -172,9 +169,7 @@ class PSMHandler:
         if num_added_psms != 0:
             logger.info(f"Added {num_added_psms} additional modified PSMs")
         else:
-            logger.warning(
-                "No modified PSMs found, ensure open modification search was enabled"
-            )
+            logger.warning("No modified PSMs found, ensure open modification search was enabled")
 
         return PSMList(psm_list=new_psm_list)
 
@@ -231,9 +226,7 @@ class _ModificationHandler:
         self.rounded_mass_to_name_dict = self._get_rounded_mass_to_name_dict()
         self.aa_sub_dict = self._get_aa_sub_dict()
         self.mass_error = mass_error
-        self.fasta_file = (
-            IndexedFASTA(fasta_file, label=r"^[\n]?>([\S]*)") if fasta_file else None
-        )
+        self.fasta_file = IndexedFASTA(fasta_file, label=r"^[\n]?>([\S]*)") if fasta_file else None
 
     def get_unimod_database(self):
         """Read unimod databse to a dataframe"""
@@ -337,8 +330,7 @@ class _ModificationHandler:
                     [
                         (i, modification_name)
                         for i, aa in enumerate(amino_acids_peptide)
-                        if (aa == residue)
-                        and (psm.peptidoform.parsed_sequence[i][1] is None)
+                        if (aa == residue) and (psm.peptidoform.parsed_sequence[i][1] is None)
                     ]
                 )
 
@@ -353,9 +345,7 @@ class _ModificationHandler:
 
         # get all potential modifications
         try:
-            potential_modifications = self.rounded_mass_to_name_dict[
-                round(mass_shift, 0)
-            ]
+            potential_modifications = self.rounded_mass_to_name_dict[round(mass_shift, 0)]
         except KeyError:
             return None
         localized_modifications = []
@@ -399,9 +389,7 @@ class _ModificationHandler:
         """Add amino acid masses to the modification dataframe"""
         aa_combinations = []
         for n in range(1, number_of_aa + 1):
-            aa_combinations.extend(
-                list(itertools.product("ACDEFGHIKLMNPQRSTVWY", repeat=n))
-            )
+            aa_combinations.extend(list(itertools.product("ACDEFGHIKLMNPQRSTVWY", repeat=n)))
         aa_to_mass_dict = {
             "".join(combo): sum([round(std_aa_mass[aa], 6) for aa in combo])
             for combo in aa_combinations
@@ -435,17 +423,13 @@ class _ModificationHandler:
         additional_aa_len = len(additional_aa)
 
         if (
-            protein_sequence[
-                peptide_start_position - additional_aa_len : peptide_start_position
-            ]
+            protein_sequence[peptide_start_position - additional_aa_len : peptide_start_position]
             == additional_aa
         ):
             found_additional_amino_acids.append(("prepeptide", additional_aa))
 
         if (
-            protein_sequence[
-                peptide_end_position : peptide_end_position + additional_aa_len
-            ]
+            protein_sequence[peptide_end_position : peptide_end_position + additional_aa_len]
             == additional_aa
         ):
             found_additional_amino_acids.append(("postpeptide", additional_aa))
