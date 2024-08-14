@@ -221,7 +221,7 @@ class _ModificationHandler:
 
         self.get_unimod_database()
         if add_aa_combinations:
-            self._add_amino_acids_combinations(add_aa_combinations)
+            self._add_amino_acid_combinations(add_aa_combinations)
         self.name_to_mass_residue_dict = self._get_name_to_mass_residue_dict()
         self.rounded_mass_to_name_dict = self._get_rounded_mass_to_name_dict()
         self.aa_sub_dict = self._get_aa_sub_dict()
@@ -385,7 +385,7 @@ class _ModificationHandler:
         }
         return aa_sub_dict
 
-    def _add_amino_acids_combinations(self, number_of_aa=1):
+    def _add_amino_acid_combinations(self, number_of_aa=1):
         """Add amino acid masses to the modification dataframe"""
         aa_combinations = []
         for n in range(1, number_of_aa + 1):
@@ -413,6 +413,10 @@ class _ModificationHandler:
 
     def check_protein_level(self, psm, additional_aa):
         """Check if the peptide is protein level"""
+
+        # Do this for decoys? Then we should be able to reverese sequences and shuffled decoys will never work
+        # TODO Multiple proteins require PSMs to be split based on proteins
+
         if psm.is_decoy:
             return []
         found_additional_amino_acids = []
