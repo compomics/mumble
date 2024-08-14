@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "Mumble"
-version = "1.0.0"
+version = "0.0.1"
 description = "Finding the perfect modification for your mass shift"
 readme = "README.md"
 keywords = [
