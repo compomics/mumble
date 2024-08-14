@@ -113,7 +113,7 @@ class PSMHandler:
         copy_psm.peptidoform = new_peptidoform
         return copy_psm
 
-    def _get_modified_peptidoforms(self, psm, keep=False, warn=True) -> list:
+    def _get_modified_peptidoforms(self, psm, keep_original=False, warn=True) -> list:
         """Get modified peptidoforms derived from 1 PSM"""
         modified_peptidoforms = []
         modification_list = self.modification_handler.localize_mass_shift(psm)
@@ -131,23 +131,25 @@ class PSMHandler:
         elif warn:
             logger.warning(f"No modifications found for {psm}")
             return None
-        if keep:
+        if keep_original:
             modified_peptidoforms.append(psm)
 
         return modified_peptidoforms
 
-    def get_modified_peptidoforms_list(self, psm, keep=False, warn=True) -> PSMList:
+    def get_modified_peptidoforms_list(self, psm, keep_original=False, warn=True) -> PSMList:
         """Get modified peptidoforms derived from 1 PSM in a PSMList"""
-        modified_peptidoforms = self._get_modified_peptidoforms(psm, keep=keep, warn=warn)
+        modified_peptidoforms = self._get_modified_peptidoforms(
+            psm, keep_original=keep_original, warn=warn
+        )
         return PSMList(psm_list=modified_peptidoforms)
 
     def add_modified_psms(
-        self, psm_list, psm_file_type="infer", add_decoys=False, keep=False
+        self, psm_list, psm_file_type="infer", generate_modified_decoys=False, keep_original=False
     ) -> PSMList:
         """Add modified psms to the psm list"""
 
         logger.info(
-            f"Adding modified PSMs to PSMlist {'WITH' if keep else 'WITHOUT'} originals, {'INCLUDING' if add_decoys else 'EXCLUDING'} modfied decoys"
+            f"Adding modified PSMs to PSMlist {'WITH' if keep_original else 'WITHOUT'} originals, {'INCLUDING' if generate_modified_decoys else 'EXCLUDING'} modfied decoys"
         )
 
         parsed_psm_list = self._parse_psm_list(psm_list, psm_file_type)
@@ -160,11 +162,13 @@ class PSMHandler:
             total=len(parsed_psm_list),
         ):
             new_psm_list.append(psm)
-            if (psm.is_decoy) & (not add_decoys):
+            if (psm.is_decoy) & (not generate_modified_decoys):
                 continue
-            new_psms = self._get_modified_peptidoforms(psm, keep=keep, warn=False)
+            new_psms = self._get_modified_peptidoforms(
+                psm, keep_original=keep_original, warn=False
+            )
             if new_psms:
-                num_added_psms += len(new_psms) if not keep else len(new_psms) - 1
+                num_added_psms += len(new_psms) if not keep_original else len(new_psms) - 1
                 new_psm_list.extend(new_psms)
         if num_added_psms != 0:
             logger.info(f"Added {num_added_psms} additional modified PSMs")
@@ -173,7 +177,7 @@ class PSMHandler:
 
         return PSMList(psm_list=new_psm_list)
 
-    def _parse_psm_list(self, psm_list, psm_file_type):
+    def parse_psm_list(self, psm_list, psm_file_type):
         """Parse the psm list to get the peptidoform and protein information"""
 
         if type(psm_list) is PSMList:
