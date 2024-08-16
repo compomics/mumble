@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pandas as pd
 from psm_utils.io import read_file, write_file
-from psm_utils import PSMList
+from psm_utils import PSMList, PSM, Peptidoform
 from psm_utils.utils import mz_to_mass
 from pyteomics import proforma
 from pyteomics.mass import std_aa_mass, calculate_mass, unimod
@@ -22,7 +22,8 @@ class PSMHandler:
     """Class that contains all information about the input file"""
 
     def __init__(self, aa_combinations=0, fasta_file=None, mass_error=0.02) -> None:
-        """Constructor of the class.
+        """
+        Constructor of the class.
 
         Args:
             input_file (str): Path to the input file
@@ -41,7 +42,15 @@ class PSMHandler:
 
     @staticmethod
     def _find_mod_locations(peptidoform):
-        """Find the locations of modifications in a peptide"""
+        """
+        Find the locations of existing modifications in a peptide.
+
+        Args:
+            peptidoform (psm_utils.Peptidoform): Peptidoform object
+
+        return:
+            list: List of locations of existing modifications
+        """
         locations = []
 
         if peptidoform.properties["n_term"] is not None:
@@ -56,8 +65,17 @@ class PSMHandler:
 
         return locations
 
-    def _return_mass_shifted_peptidoform(self, modification_tuple, peptidoform):
-        """Apply a modification tuple to a peptidoform"""
+    def _return_mass_shifted_peptidoform(self, modification_tuple, peptidoform) -> Peptidoform:
+        """
+        Apply a modification tuple to a peptidoform.
+
+        Args:
+            modification_tuple (tuple): Tuple containing the location(int) and the modification name(str)
+            peptidoform (psm_utils.Peptidoform): Peptidoform object
+
+        return:
+            psm_utils.Peptidoform: Peptidoform object
+        """
 
         new_peptidoform = deepcopy(peptidoform)
 
@@ -105,8 +123,17 @@ class PSMHandler:
         return new_peptidoform
 
     @staticmethod
-    def _create_new_psm(psm, new_peptidoform):
-        """Create new psm with new peptidoform"""
+    def _create_new_psm(psm, new_peptidoform) -> PSM:
+        """
+        Create new psm with new peptidoform.
+
+        Args:
+            psm (psm_utils.PSM): PSM object
+            new_peptidoform (psm_utils.Peptidoform): Peptidoform object
+
+        return:
+            psm_utils.PSM: PSM object
+        """
         if new_peptidoform is None:
             return
         copy_psm = deepcopy(psm)
@@ -114,7 +141,17 @@ class PSMHandler:
         return copy_psm
 
     def _get_modified_peptidoforms(self, psm, keep_original=False, warn=True) -> list:
-        """Get modified peptidoforms derived from 1 PSM"""
+        """
+        Get modified peptidoforms derived from a single PSM.
+
+        Args:
+            psm (psm_utils.PSM): PSM object
+            keep_original (bool, optional): Keep the original PSM. Defaults to False.
+            warn (bool, optional): Warn if no modifications are found. Defaults to True.
+
+        return:
+            list: List of modified PSMs
+        """
         modified_peptidoforms = []
         modification_list = self.modification_handler.localize_mass_shift(psm)
         if modification_list:
@@ -137,7 +174,17 @@ class PSMHandler:
         return modified_peptidoforms
 
     def get_modified_peptidoforms_list(self, psm, keep_original=False, warn=True) -> PSMList:
-        """Get modified peptidoforms derived from 1 PSM in a PSMList"""
+        """
+        Get modified peptidoforms derived from 1 PSM in a PSMList.
+
+        Args:
+            psm (psm_utils.PSM): PSM object
+            keep_original (bool, optional): Keep the original PSM. Defaults to False.
+            warn (bool, optional): Warn if no modifications are found. Defaults to True.
+
+        return:
+            psm_utils.PSMList: PSMList object
+        """
         modified_peptidoforms = self._get_modified_peptidoforms(
             psm, keep_original=keep_original, warn=warn
         )
@@ -146,7 +193,18 @@ class PSMHandler:
     def add_modified_psms(
         self, psm_list, psm_file_type="infer", generate_modified_decoys=False, keep_original=False
     ) -> PSMList:
-        """Add modified psms to the psm list"""
+        """
+        Add modified psms to a psm list
+
+        args:
+            psm_list (str, list, PSMList): Path to the psm file, list of PSMs or PSMList object
+            psm_file_type (str, optional): Type of the input file to read with PSM_utlis.io.read_file. Defaults to "infer" only used if psm_list is filepath.
+            generate_modified_decoys (bool, optional): Generate modified decoys. Defaults to False.
+            keep_original (bool, optional): Keep the original PSMs. Defaults to False.
+
+        return:
+            psm_utils.PSMList: PSMList object
+        """
 
         logger.info(
             f"Adding modified PSMs to PSMlist {'WITH' if keep_original else 'WITHOUT'} originals, {'INCLUDING' if generate_modified_decoys else 'EXCLUDING'} modfied decoys"
@@ -177,8 +235,17 @@ class PSMHandler:
 
         return PSMList(psm_list=new_psm_list)
 
-    def parse_psm_list(self, psm_list, psm_file_type):
-        """Parse the psm list to get the peptidoform and protein information"""
+    def parse_psm_list(self, psm_list, psm_file_type="infer") -> PSMList:
+        """
+        Parse the psm list to get the peptidoform and protein information
+
+        Args:
+            psm_list (str, list, PSMList): Path to the psm file, list of PSMs or PSMList object
+            psm_file_type (str, optional): Type of the input file to read with PSM_utlis.io.read_file. Defaults to "infer".
+
+        return:
+            psm_utils.PSMList: PSMList object
+        """
 
         if type(psm_list) is PSMList:
             pass
@@ -193,7 +260,17 @@ class PSMHandler:
         return psm_list
 
     def write_modified_psm_list(self, psm_list, output_file=None, psm_file_type="tsv"):
-        """Write the modified PSM list to a file"""
+        """
+        Write the modified PSM list to a file
+
+        Args:
+            psm_list (psm_utils.PSMList): PSMList object
+            output_file (str, optional): Path to the output file. Defaults to None.
+            psm_file_type (str, optional): Type of the output file to write with PSM_utlis.io.write_file. Defaults to "tsv".
+
+        return:
+            None
+        """
 
         if self.psm_file_name and output_file is None:
             logger.warning("No output file specified")
@@ -215,7 +292,8 @@ class _ModificationHandler:
         add_aa_combinations=0,
         fasta_file=None,
     ) -> None:
-        """Constructor of the class.
+        """
+        Constructor of the class.
 
         Args:
             mass_error (float, optional): Mass error for the mass shift. Defaults to 0.02.
@@ -233,7 +311,9 @@ class _ModificationHandler:
         self.fasta_file = IndexedFASTA(fasta_file, label=r"^[\n]?>([\S]*)") if fasta_file else None
 
     def get_unimod_database(self):
-        """Read unimod databse to a dataframe"""
+        """
+        Read unimod databse to a dataframe.
+        """
         unimod_db = unimod.Unimod()
         # if necesary, make distinction protein and peptide level C-term and N-term modifications
         position_id_mapper = {
@@ -278,7 +358,12 @@ class _ModificationHandler:
         )
 
     def _get_name_to_mass_residue_dict(self):
-        """Get dictionary with name as key and mass and residue as value"""
+        """
+        Get dictionary with name as key and mass and residue as value
+
+        return:
+            dict: Dictionary with name as key and mass and residue as value
+        """
         Modification = namedtuple("modification", ["mass", "residues", "restrictions"])
 
         return {
@@ -290,7 +375,12 @@ class _ModificationHandler:
         }  # TODO: used named tuple here
 
     def _get_rounded_mass_to_name_dict(self):
-        """Get dictionary with rounded mass as key and name as value"""
+        """
+        Get dictionary with rounded mass as key and name as value
+
+        return:
+            dict: Dictionary with rounded mass as key and name as value
+        """
 
         return {
             row.rounded_mass: row.name
@@ -300,39 +390,59 @@ class _ModificationHandler:
             .itertuples()
         }
 
-    def get_localisation(self, psm, modification_name, residue_list, restrictions):
-        """Localise a given modification in a peptide"""
+    def get_localisation(
+        self, psm, modification_name, residue_list, restrictions
+    ) -> list[namedtuple]:
+        """
+        Localise a given modification in a peptide
+
+        Args:
+            psm (psm_utils.PSM): PSM object
+            modification_name (str): Name of the modification
+            residue_list (list): List of residues
+            restrictions (list): List of restrictions
+
+            return:
+                list: List of localised mass shifts
+        """
         loc_list = []
+        Localised_mass_shift = namedtuple("Localised_mass_shift", ["loc", "modification"])
+
         amino_acids_peptide = [x[0] for x in psm.peptidoform.parsed_sequence]
 
         for residue, restriction in zip(residue_list, restrictions):
             if (residue == "N-term") and (psm.peptidoform.properties["n_term"] is None):
-                loc_list.append(("N-term", modification_name))
+                loc_list.append(Localised_mass_shift("N-term", modification_name))
 
             elif residue == "C-term" and (psm.peptidoform.properties["c_term"] is None):
-                loc_list.append(("C-term", modification_name))
+                loc_list.append(Localised_mass_shift("C-term", modification_name))
 
             elif residue == "protein_level":
-                loc_list.extend(self.check_protein_level(psm, modification_name))
+                loc_list.extend(
+                    [
+                        Localised_mass_shift(loc, mod)
+                        for loc, mod in self.check_protein_level(psm, modification_name)
+                    ]
+                )
 
             elif (
                 restriction == "N-term"
                 and (psm.peptidoform.properties["n_term"] is None)
                 and (psm.peptidoform.parsed_sequence[0][0] == residue)
             ):
-                loc_list.append(("N-term", modification_name))
+                loc_list.append(Localised_mass_shift("N-term", modification_name))
 
             elif (
                 restriction == "C-term"
                 and (psm.peptidoform.properties["c_term"] is None)
                 and (psm.peptidoform.parsed_sequence[-1][0] == residue)
             ):
-                loc_list.append(("C-term", modification_name))
+                loc_list.append(Localised_mass_shift("C-term", modification_name))
 
             elif residue in amino_acids_peptide:
                 loc_list.extend(
                     [
-                        (i, modification_name)
+                        Localised_mass_shift(i, modification_name)
                         for i, aa in enumerate(amino_acids_peptide)
                         if (aa == residue) and (psm.peptidoform.parsed_sequence[i][1] is None)
                     ]
@@ -340,8 +450,15 @@ class _ModificationHandler:
 
         return loc_list
 
-    def localize_mass_shift(self, psm) -> list[tuple]:
-        """Give potential localisations of a mass shift in a peptide"""
+    def localize_mass_shift(self, psm) -> list[namedtuple]:
+        """Give potential localisations of a mass shift in a peptide
+
+        Args:
+            psm (psm_utils.PSM): PSM object
+
+        return:
+            list: List of localised mass shifts
+        """
 
         expmass = mz_to_mass(psm.precursor_mz, psm.get_precursor_charge())
         calcmass = calculate_mass(psm.peptidoform.composition)
@@ -374,7 +491,12 @@ class _ModificationHandler:
         return localized_modifications if localized_modifications else None
 
     def _get_aa_sub_dict(self):
-        """Get dictionary with name as key and mass and residue as value"""
+        """
+        Get dictionary with name as key and mass and residue as value.
+
+        return:
+            dict: Dictionary with name as key and mass and residue as value
+        """
 
         aa_sub_df = self.modification_df[
             self.modification_df["classification"] == "AA substitution"
@@ -390,7 +512,12 @@ class _ModificationHandler:
         return aa_sub_dict
 
     def _add_amino_acid_combinations(self, number_of_aa=1):
-        """Add amino acid masses to the modification dataframe"""
+        """
+        Add amino acid masses to the modification dataframe
+
+        Args:
+            number_of_aa (int, optional): Number of amino acids to add. Defaults to 1.
+        """
         aa_combinations = []
         for n in range(1, number_of_aa + 1):
             aa_combinations.extend(list(itertools.product("ACDEFGHIKLMNPQRSTVWY", repeat=n)))
@@ -416,7 +543,13 @@ class _ModificationHandler:
         )
 
     def check_protein_level(self, psm, additional_aa):
-        """Check if the peptide is protein level"""
+        """
+        Check if amino acid(s) precedes or follows a peptide in the protein sequence.
+
+        Args:
+            psm (psm_utils.PSM): PSM object
+            additional_aa (str): Additional amino acid to check
+        """
 
         # Do this for decoys? Then we should be able to reverese sequences and shuffled decoys will never work
         # TODO Multiple proteins require PSMs to be split based on proteins
