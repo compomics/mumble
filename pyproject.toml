@@ -30,7 +30,7 @@ dependencies = [
 requires-python = ">=3.9"
 
 [project.optional-dependencies]
-dev = ["ruff", "black", "pytest", "pre-commit"]
+dev = ["ruff", "black", "pytest", "pre-commit", "bumpver"]
 
 [project.scripts]
 realpython = "mumble.__main__:main"
@@ -45,3 +45,15 @@ target-version = 'py38'
 
 [tool.ruff.lint]
 extend-select = ["T201", "T203"]
+
+[tool.bumpver]
+current_version = "0.0.1"
+version_pattern = "MAJOR.MINOR.PATCH"
+commit_message  = "Bump version {old_version} -> {new_version}"
+commit          = true
+tag             = true
+push            = false
+
+[tool.bumpver.file_patterns]
+"pyproject.toml" = ['current_version = "{version}"', 'version = "{version}"']
+"mumble/__init__.py" = ["{version}"]
