@@ -210,7 +210,7 @@ class PSMHandler:
             f"Adding modified PSMs to PSMlist {'WITH' if keep_original else 'WITHOUT'} originals, {'INCLUDING' if generate_modified_decoys else 'EXCLUDING'} modfied decoys"
         )
 
-        parsed_psm_list = self._parse_psm_list(psm_list, psm_file_type)
+        parsed_psm_list = self.parse_psm_list(psm_list, psm_file_type)
         new_psm_list = []
         num_added_psms = 0
 
@@ -300,10 +300,15 @@ class _ModificationHandler:
             add_aa_combinations (int, optional): Number of amino acid combinations to add as modification. Defaults to 0.
             fasta_file (str, optional): Path to the fasta file. Defaults to None.
         """
-
+        # TODO add amino acid variations (mutation) as flag
         self.get_unimod_database()
         if add_aa_combinations:
+            if not fasta_file:
+                raise ValueError("Fasta file is required to add amino acid combinations")
             self._add_amino_acid_combinations(add_aa_combinations)
+            self.protein_level_check = True
+        else:
+            self.protein_level_check = False
         self.name_to_mass_residue_dict = self._get_name_to_mass_residue_dict()
         self.rounded_mass_to_name_dict = self._get_rounded_mass_to_name_dict()
         self.aa_sub_dict = self._get_aa_sub_dict()

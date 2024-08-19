@@ -4,10 +4,8 @@ from mumble import PSMHandler
 
 
 @click.command("cli", context_settings={"show_default": True})
-@click.option(
-    "--input_file",
-    "-i",
-    help="Path to the input file",
+@click.argument(
+    "input_file",
     type=click.Path(exists=True),
     required=True,
 )
@@ -21,7 +19,7 @@ from mumble import PSMHandler
 @click.option(
     "--aa_combinations",
     "-a",
-    help="Number of amino acid combinations to add as modification",
+    help="Number of amino acid combinations to add as modification REQUIRES fasta_file",
     type=click.INT,
     default=0,
     show_default=True,
@@ -29,7 +27,7 @@ from mumble import PSMHandler
 @click.option(
     "--fasta_file",
     "-f",
-    help="Path to the fasta file",
+    help="Path to a fasta file",
     type=click.Path(exists=True),
     default=None,
 )
@@ -57,14 +55,14 @@ from mumble import PSMHandler
     show_default=True,
 )
 @click.option(
-    "--add_decoys",
+    "--generate_modified_decoys",
     help="Parse modifications for decoys in modified PSMlist",
     is_flag=True,
     default=False,
     show_default=True,
 )
 @click.option(
-    "--keep",
+    "--keep_original",
     help="Keep the original PSMs in the modified PSMlist",
     is_flag=True,
     default=False,
@@ -78,11 +76,11 @@ def main(
     mass_error,
     output_file,
     filetype_write,
-    add_decoys,
-    keep,
+    generate_modified_decoys,
+    keep_original,
 ):
     """
-    Where your mass shift can find its unimod match.
+    Finding the perfect match for your mass shift.\n
     __________
 
     The `main` function is the entry point for processing Peptide Spectrum Matches (PSMs) with potential mass modifications. It reads the input PSM file, identifies possible modifications based on mass shifts found by the search engine, and generates new PSM entries with these modifications. The function can handle different file types, apply amino acid combination modifications, and incorporate decoy sequences if specified. The resulting modified PSM list can be output in various formats, allowing for easy integration into downstream analysis pipelines.
@@ -91,7 +89,10 @@ def main(
         aa_combinations=aa_combinations, fasta_file=fasta_file, mass_error=mass_error
     )
     modified_psm_list = psm_handler.add_modified_psms(
-        input_file, psm_file_type=filetype_read, add_decoys=add_decoys, keep=keep
+        input_file,
+        psm_file_type=filetype_read,
+        generate_modified_decoys=generate_modified_decoys,
+        keep_original=keep_original,
     )
     psm_handler.write_modified_psm_list(
         modified_psm_list, output_file=output_file, psm_file_type=filetype_write
