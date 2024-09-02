@@ -410,7 +410,7 @@ class _ModificationHandler:
                 "residue",
                 "rounded_mass",
             ],
-        )
+        ).sort_values(by="monoisotopic_mass").reset_index(drop=True)
 
     def _get_name_to_mass_residue_dict(self):
         """
