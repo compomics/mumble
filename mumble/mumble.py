@@ -508,7 +508,6 @@ class _ModificationHandler:
         # get all potential modifications
         try:
             potential_modifications_indices = self._binary_range_search(self.modification_df["monoisotopic_mass"].to_numpy(),mass_shift,self.mass_error)
-            print(self.modification_df[potential_modifications_indices[0]:potential_modifications_indices[1]])
             potential_modifications = self.modification_df[potential_modifications_indices[0]:potential_modifications_indices[1]]["name"]
         except KeyError:
             return None
