@@ -76,7 +76,7 @@ class TestPSMHandler:
         mod_handler.aa_sub_dict = {"His->Ala": ("H", "A")}
 
         mod_handler.localize_mass_shift.return_value = [("N-term", "Acetyl")]
-        new_psms = psm_handler._get_modified_peptidoforms(psm, keep=True)
+        new_psms = psm_handler._get_modified_peptidoforms(psm, keep_original=True)
 
         assert isinstance(new_psms, list)
         assert len(new_psms) == 2
@@ -84,7 +84,7 @@ class TestPSMHandler:
         assert new_psms[1] == psm
 
         mod_handler.localize_mass_shift.return_value = [(1, "Carbamyl"), (4, "Carbamyl")]
-        new_psms = psm_handler._get_modified_peptidoforms(psm, keep=False)
+        new_psms = psm_handler._get_modified_peptidoforms(psm, keep_original=False)
 
         assert isinstance(new_psms, list)
         assert len(new_psms) == 2
@@ -167,12 +167,13 @@ class TestModificationHandler:
             spectrum_id="some_spectrum",
             is_decoy=False,
             protein_list=["some_protein"],
+            precursor_mz=228.4614,
         )
         mod_handler = _ModificationHandler(mass_error=0.02)
         return mod_handler, psm
 
     def test_get_unimod_database(self, setup_modhandler):
-        mod_handler = setup_modhandler
+        mod_handler, _ = setup_modhandler
         mod_handler.get_unimod_database()
 
         assert mod_handler.modification_df is not None
@@ -197,9 +198,69 @@ class TestModificationHandler:
             == 260.116093
         )
 
-    def test_localize_mass_shift(self, setup_modhandler):
-        mod_handler, psm = setup_modhandler
+    def test_get_localisation(self, setup_modhandler):
+        mod_handler, _ = setup_modhandler
 
+        psm = PSM(
+            peptidoform="QART[Deoxy]HRQ/3",
+            spectrum_id="some_spectrum",
+        )
+
+        # Example input data
+        modification_name = "mod1"
+        residue_list = ["R", "N-term", "C-term", "Q", "protein_level"]
+        restrictions = ["anywhere", "N-term", "C-term", "N-term", "anywhere"]
+
+        # Mock the check_protein_level method
+        mod_handler.check_protein_level = MagicMock(return_value=[("prepeptide", "mod1")])
+
+        # Expected output
+        Localised_mass_shift = namedtuple("Localised_mass_shift", ["loc", "modification"])
+        expected_output = [
+            Localised_mass_shift(2, "mod1"),
+            Localised_mass_shift(5, "mod1"),  # R in the sequence
+            Localised_mass_shift("N-term", "mod1"),  # N-term modification
+            Localised_mass_shift("C-term", "mod1"),  # C-term modification
+            Localised_mass_shift("N-term", "mod1"),  # Q in the sequence
+            Localised_mass_shift("prepeptide", "mod1"),  # protein level modification
+        ]
+
+        # Call the method
+        result = mod_handler.get_localisation(psm, modification_name, residue_list, restrictions)
+
+        # Assertions
+        assert result == expected_output
+
+        psm = PSM(
+            peptidoform="KTIEVFDPDADTW/2",
+            spectrum_id="some_spectrum",
+        )
+
+        # Example input data
+        modification_name = "mod1"
+        residue_list = ["F"]
+        restrictions = ["N-term"]
+
+        # Expected output
+        expected_output = []
+
+        # Call the method
+        result = mod_handler.get_localisation(psm, modification_name, residue_list, restrictions)
+
+        # Assertions
+        assert result == expected_output
+
+    def test_localize_mass_shift(self, setup_modhandler):
+        mod_handler, _ = setup_modhandler
+
+        psm = PSM(
+            peptidoform="ART[Deoxy]HR/3",
+            spectrum_id="some_spectrum",
+            is_decoy=False,
+            protein_list=["some_protein"],
+            precursor_mz=208.79446854107334,
+        )
+        orginal_precursor_mz = psm.precursor_mz
         mod_handler.name_to_mass_residue_dict = {
             "Carbamyl": namedtuple("Modification", ["mass", "residues", "restrictions"])(
                 43.005814, ["C", "R"], ["anywhere", "anywhere"]
@@ -210,13 +271,13 @@ class TestModificationHandler:
         }
         mod_handler.rounded_mass_to_name_dict = {43.0: ["Carbamyl"], 42.0: ["Acetyl"]}
 
-        psm.precursor_mz = 214.126106 + (43.005814 / 3)
+        psm.precursor_mz = orginal_precursor_mz + (43.005814 / 3)
         localized_modifications = mod_handler.localize_mass_shift(psm)
         assert localized_modifications is not None
         assert localized_modifications[0] == (1, "Carbamyl")
         assert localized_modifications[1] == (4, "Carbamyl")
 
-        psm.precursor_mz = 214.126106 + (42.010565 / 3)
+        psm.precursor_mz = orginal_precursor_mz + (42.010565 / 3)
         localized_modifications = mod_handler.localize_mass_shift(psm)
         assert localized_modifications is not None
         assert localized_modifications[0] == ("N-term", "Acetyl")
