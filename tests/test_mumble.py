@@ -261,15 +261,6 @@ class TestModificationHandler:
             precursor_mz=208.79446854107334,
         )
         orginal_precursor_mz = psm.precursor_mz
-        mod_handler.name_to_mass_residue_dict = {
-            "Carbamyl": namedtuple("Modification", ["mass", "residues", "restrictions"])(
-                43.005814, ["C", "R"], ["anywhere", "anywhere"]
-            ),
-            "Acetyl": namedtuple("Modification", ["mass", "residues", "restrictions"])(
-                42.010565, ["N-term"], ["any N-term"]
-            ),
-        }
-        mod_handler.rounded_mass_to_name_dict = {43.0: ["Carbamyl"], 42.0: ["Acetyl"]}
 
         psm.precursor_mz = orginal_precursor_mz + (43.005814 / 3)
         localized_modifications = mod_handler.localize_mass_shift(psm)
