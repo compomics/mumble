@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class PSMHandler:
     """Class that contains all information about the input file"""
 
-    def __init__(self, aa_combinations=0, fasta_file=None, mass_error=0.02) -> None:
+    def __init__(self, aa_combinations=0, fasta_file=None, mass_error=0.02, **kwargs) -> None:
         """
         Constructor of the class.
 
@@ -39,6 +39,7 @@ class PSMHandler:
             add_aa_combinations=aa_combinations,
             fasta_file=fasta_file,
         )
+        self.psm_file_name = None
 
     @staticmethod
     def _find_mod_locations(peptidoform):
@@ -273,11 +274,11 @@ class PSMHandler:
         """
 
         if self.psm_file_name and output_file is None:
+            output_file = self.psm_file_name.stem + "_modified"
+
+        elif not self.psm_file_name and output_file is None:
             logger.warning("No output file specified")
             output_file = "modified_psm_list"
-
-        elif output_file is None and self.psm_file_name:
-            output_file = self.psm_file_name.stem + "_modified"
 
         logger.info(f"Writing modified PSM list to {output_file}")
         write_file(psm_list=psm_list, filename=output_file, filetype=psm_file_type)
@@ -331,12 +332,20 @@ class _ModificationHandler:
 
         modifications = []
         for mod in unimod_db.mods:
+            if (
+                not mod.username_of_poster == "unimod"
+            ):  # Do not include user submitted modifications
+                continue
             name = mod.ex_code_name
             if not name:
                 name = mod.code_name
+            if ("Xlink" in name) or ("plex" in name):  # Do not include crosslinks
+                continue
             monoisotopic_mass = mod.monoisotopic_mass
             for specificity in mod.specificities:
                 classification = specificity.classification
+                if classification == "Isotopic label":  # Do not include isotopic labels
+                    continue
                 position = specificity.position_id
                 aa = specificity.amino_acid
                 modifications.append(
@@ -429,20 +438,23 @@ class _ModificationHandler:
                         for loc, mod in self.check_protein_level(psm, modification_name)
                     ]
                 )
+            elif restriction == "N-term" or restriction == "C-term":
+                if (
+                    restriction == "N-term"
+                    and (psm.peptidoform.properties["n_term"] is None)
+                    and (psm.peptidoform.parsed_sequence[0][0] == residue)
+                ):
+                    loc_list.append(Localised_mass_shift("N-term", modification_name))
 
-            elif (
-                restriction == "N-term"
-                and (psm.peptidoform.properties["n_term"] is None)
-                and (psm.peptidoform.parsed_sequence[0][0] == residue)
-            ):
-                loc_list.append(Localised_mass_shift("N-term", modification_name))
+                elif (
+                    restriction == "C-term"
+                    and (psm.peptidoform.properties["c_term"] is None)
+                    and (psm.peptidoform.parsed_sequence[-1][0] == residue)
+                ):
+                    loc_list.append(Localised_mass_shift("C-term", modification_name))
 
-            elif (
-                restriction == "C-term"
-                and (psm.peptidoform.properties["c_term"] is None)
-                and (psm.peptidoform.parsed_sequence[-1][0] == residue)
-            ):
-                loc_list.append(Localised_mass_shift("C-term", modification_name))
+                else:
+                    continue
 
             elif residue in amino_acids_peptide:
                 loc_list.extend(
