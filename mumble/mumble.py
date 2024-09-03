@@ -201,7 +201,7 @@ class PSMHandler:
             psm_list (str, list, PSMList): Path to the psm file, list of PSMs or PSMList object
             psm_file_type (str, optional): Type of the input file to read with PSM_utlis.io.read_file. Defaults to "infer" only used if psm_list is filepath.
             generate_modified_decoys (bool, optional): Generate modified decoys. Defaults to False.
-            keep_original (bool, optional): Keep the original PSMs. Defaults to False.
+            keep_original (bool, optional): Keep the original PSMs. Defaults to Fa  lse.
 
         return:
             psm_utils.PSMList: PSMList object
@@ -407,9 +407,49 @@ class _ModificationHandler:
                 "classification",
                 "restriction",
                 "residue",
-                "rounded_mass",
+                #"rounded_mass",
             ],
-        ).sort_values(by="monoisotopic_mass").reset_index(drop=True)
+        )
+        
+        monoisotopic_masses, modifications = self._generate_modifications_combinations_lists(2)
+
+    def _generate_modifications_combinations_lists(self,combination_length=1):
+        """
+        Generates all possible combinations of modifications and calculates their summed monoisotopic masses.
+
+        This method creates combinations of modifications up to the specified combination length and calculates
+        the total monoisotopic mass for each combination. The results are returned as two lists: one containing
+        the summed monoisotopic masses and the other containing the corresponding modification combinations.
+        The results are sorted by the summed monoisotopic masses in ascending order.
+
+        Args:
+            combination_length (int): The maximum number of modifications to include in each combination. 
+                                    Defaults to 1. Combinations will include all lengths from 1 up to this value.
+
+        Returns:
+            tuple: A tuple containing two elements:
+                - List[float]: A list of summed monoisotopic masses, sorted in ascending order.
+                - List[tuple]: A list of tuples, where each tuple contains a combination of modification names
+                            corresponding to the summed monoisotopic masses.
+        """
+        # generate modifcations combinations and calculate summed mass
+        modifications = []
+        monoisotopic_masses = []
+        for r in range(1, combination_length + 1):
+            name_combinations = itertools.combinations(self.modification_df['name'], r)
+            modifications.extend(name_combinations)
+
+            mass_summes = [sum(mass for mass in comb) for comb in itertools.combinations(self.modification_df['monoisotopic_mass'], r)]
+            monoisotopic_masses.extend(mass_summes)
+        
+        # Combine masses and modifications into tuples, sort by monoisotopic mass, then unzip back into two lists
+        combined = sorted(zip(monoisotopic_masses, modifications))
+            
+        if combined:
+            monoisotopic_masses, modifications = zip(*combined)
+            return list(monoisotopic_masses), list(modifications)
+        else:
+            return [], []
 
     def _get_name_to_mass_residue_dict(self):
         """
