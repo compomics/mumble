@@ -250,6 +250,7 @@ class TestModificationHandler:
         # Assertions
         assert result == expected_output
 
+    # TODO: refactor after changes in localize_mass_shift
     def test_localize_mass_shift(self, setup_modhandler):
         mod_handler, _ = setup_modhandler
 
@@ -286,6 +287,123 @@ class TestModificationHandler:
         additional_aa = "Q"
         results = mod_handler.check_protein_level(psm, additional_aa)
         assert ("postpeptide", "Q") in results
+
+
+    @pytest.fixture
+    def setup_modhandler_with_data(self):
+        # Setup a _ModificationHandler instance with a sample modification DataFrame
+        mod_handler = _ModificationHandler(mass_error=0.02)
+        data = {
+            "name": ["mod1", "mod2", "mod3"],
+            "monoisotopic_mass": [10.0, 40.0, 20.0],
+        }
+        mod_handler.modification_df = pd.DataFrame(data)
+        return mod_handler
+    
+    def test_generate_modifications_combinations_lists_length_1(self, setup_modhandler_with_data):
+        mod_handler = setup_modhandler_with_data
+
+        # Test the function with combination_length=1
+        masses, combinations = mod_handler._generate_modifications_combinations_lists(combination_length=1)
+
+        # Expected results
+        expected_masses = [
+            10.0,
+            20.0,
+            40.0,
+        ]
+        expected_combinations = [
+            ("mod1",),
+            ("mod3",),
+            ("mod2",),
+        ]
+
+        # Assertions
+        assert masses == expected_masses
+        assert combinations == expected_combinations
+    
+    def test_generate_modifications_combinations_lists_length_2(self, setup_modhandler_with_data):
+        mod_handler = setup_modhandler_with_data
+
+        # Test the function with combination_length=2
+        masses, combinations = mod_handler._generate_modifications_combinations_lists(combination_length=2)
+
+        # Expected results
+        expected_masses = [
+            10.0,
+            20.0,
+            10.0 + 20.0,
+            40.0,
+            10.0 + 40.0,
+            20.0 + 40.0,
+        ]
+        expected_combinations = [
+            ("mod1",),
+            ("mod3",),
+            ("mod1","mod3"),
+            ("mod2",),
+            ("mod1", "mod2"),
+            ("mod3", "mod2"),
+        ]
+
+        # Assertions for masses
+        assert masses == expected_masses
+
+        # Convert tuples to frozensets for comparison
+        expected_combinations_set = set(frozenset(x) for x in expected_combinations)
+        combinations_set = set(frozenset(x) for x in combinations)
+
+        # Assertions for combinations (ignoring order within tuples and order of tuples in the list)
+        assert combinations_set == expected_combinations_set
+
+    def test_generate_modifications_combinations_lists_length_3(self, setup_modhandler_with_data):
+        mod_handler = setup_modhandler_with_data
+
+        # Test the function with combination_length=3
+        masses, combinations = mod_handler._generate_modifications_combinations_lists(combination_length=3)
+
+        # Expected results
+        expected_masses = [
+            10.0,
+            20.0,
+            10.0 + 20.0,
+            40.0,
+            10.0 + 40.0,
+            20.0 + 40.0,
+            10.0 + 20.0 + 40.0
+        ]
+        expected_combinations = [
+            ("mod1",),
+            ("mod3",),
+            ("mod1","mod3"),
+            ("mod2",),
+            ("mod1", "mod2"),
+            ("mod3", "mod2"),
+            ("mod1", "mod2", "mod3"),
+        ]
+
+        # Assertions for masses
+        assert masses == expected_masses
+
+        # Convert tuples to frozensets for comparison
+        expected_combinations_set = set(frozenset(x) for x in expected_combinations)
+        combinations_set = set(frozenset(x) for x in combinations)
+
+        # Assertions for combinations (ignoring order within tuples and order of tuples in the list)
+        assert combinations_set == expected_combinations_set
+
+
+    def test_generate_modifications_combinations_lists_empty(self, setup_modhandler_with_data):
+        mod_handler = setup_modhandler_with_data
+
+        # Test the function with an empty DataFrame
+        mod_handler.modification_df = pd.DataFrame(columns=["name", "monoisotopic_mass"])
+
+        masses, combinations = mod_handler._generate_modifications_combinations_lists(combination_length=2)
+
+        # Assertions
+        assert masses == []
+        assert combinations == []
 
 
 if __name__ == "__main__":
