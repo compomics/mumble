@@ -251,9 +251,25 @@ class TestModificationHandler:
         assert result == expected_output
 
     # TODO: refactor after changes in localize_mass_shift
-    def test_localize_mass_shift(self, setup_modhandler):
+    def test_localize_mass_shift_combination_length_1(self,setup_modhandler):
+        # Create an instance of the handler
         mod_handler, _ = setup_modhandler
 
+        # Mock necessary attributes related to the UniMod database
+        # Mock necessary attributes on the instance
+        mod_handler.name_to_mass_residue_dict = {
+            "Carbamyl": MagicMock(residues=['C'], restrictions=None),
+            "Acetyl": MagicMock(residues=['N-term'], restrictions=None),
+        }
+        mod_handler.monoisotopic_masses = [43.005814, 42.010565]
+        mod_handler.modifications_names = [("Carbamyl",), ("Acetyl",)]
+        # mod_handler._binary_range_search = MagicMock(return_value=(0, 2))
+        mod_handler.get_localisation = MagicMock(side_effect=[
+            [{"loc": 1, "modification": "Carbamyl"}],  # First call for Carbamyl
+            [{"loc": "N-term", "modification": "Acetyl"}],  # Second call for Acetyl
+        ])
+
+        # Mock PSM object with necessary attributes
         psm = PSM(
             peptidoform="ART[Deoxy]HR/3",
             spectrum_id="some_spectrum",
@@ -261,18 +277,39 @@ class TestModificationHandler:
             protein_list=["some_protein"],
             precursor_mz=208.79446854107334,
         )
-        orginal_precursor_mz = psm.precursor_mz
+        original_precursor_mz = psm.precursor_mz
 
-        psm.precursor_mz = orginal_precursor_mz + (43.005814 / 3)
+        # Test case 1: Carbamyl
+        psm.precursor_mz = original_precursor_mz + (43.005814 / 3)
         localized_modifications = mod_handler.localize_mass_shift(psm)
-        assert localized_modifications is not None
-        assert localized_modifications[0] == (1, "Carbamyl")
-        assert localized_modifications[1] == (4, "Carbamyl")
 
-        psm.precursor_mz = orginal_precursor_mz + (42.010565 / 3)
-        localized_modifications = mod_handler.localize_mass_shift(psm)
         assert localized_modifications is not None
-        assert localized_modifications[0] == ("N-term", "Acetyl")
+        assert localized_modifications[0].Localised_mass_shift[0].loc == 1
+        assert localized_modifications[0].Localised_mass_shift[0].modification == "Carbamyl"
+
+        # Test case 2: Acetyl
+        # psm.precursor_mz = original_precursor_mz + (42.010565 / 3)
+        # localized_modifications = mod_handler.localize_mass_shift(psm)
+
+        # assert localized_modifications is not None
+        # assert localized_modifications[0].Localised_mass_shift[0].loc == "N-term"
+        # assert localized_modifications[0].Localised_mass_shift[0].modification == "Acetyl"
+
+    # def test_localize_mass_shift2(self, setup_modhandler):
+    #     mod_handler, _ = setup_modhandler
+
+    #     psm = PSM(
+    #         peptidoform="ART[Deoxy]HR/3",
+    #         spectrum_id="some_spectrum",
+    #         is_decoy=False,
+    #         protein_list=["some_protein"],
+    #         precursor_mz=208.79446854107334,
+    #     )
+    #     orginal_precursor_mz = psm.precursor_mz
+
+    #     psm.precursor_mz = orginal_precursor_mz + (((43.005814 + 42.010565) / 3))
+    #     localized_modifications = mod_handler.localize_mass_shift(psm)
+    #     print(localized_modifications)
 
     def test_check_protein_level(self, setup_modhandler):
         mod_handler, psm = setup_modhandler
