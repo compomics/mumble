@@ -251,22 +251,43 @@ class TestModificationHandler:
         assert result == expected_output
 
     # TODO: refactor after changes in localize_mass_shift
-    def test_localize_mass_shift_combination_length_1(self,setup_modhandler):
+    def test_localize_mass_shift_combination_length_1(self, setup_modhandler):
         # Create an instance of the handler
         mod_handler, _ = setup_modhandler
 
         # Mock necessary attributes related to the UniMod database
-        # Mock necessary attributes on the instance
         mod_handler.name_to_mass_residue_dict = {
             "Carbamyl": MagicMock(residues=['C'], restrictions=None),
             "Acetyl": MagicMock(residues=['N-term'], restrictions=None),
+            "Oxidation": MagicMock(residues=['M'], restrictions=None),
+            "Phospho": MagicMock(residues=['S', 'T', 'Y'], restrictions=None),
         }
-        mod_handler.monoisotopic_masses = [43.005814, 42.010565]
-        mod_handler.modifications_names = [("Carbamyl",), ("Acetyl",)]
-        # mod_handler._binary_range_search = MagicMock(return_value=(0, 2))
+
+        # Setting up 4 modifications: 2 close to the target mass shift, and 2 far
+        mod_handler.monoisotopic_masses = [
+            15.994915,  # Far from target
+            43.005814,  # Close to target
+            43.015814,  # Close to target
+            79.966331,  # Far from target
+        ]
+
+        mod_handler.modifications_names = [
+            ("Oxidation",), # Far
+            ("Carbamyl",),  # Close§
+            ("Acetyl",),    # Close
+            ("Phospho",),   # Far
+        ]
+
+        # The binary search will automatically find only the close masses
+        # (mocking is not necessary for _binary_range_search)
+        
+        # Mock get_localisation to return valid positions for the modifications
         mod_handler.get_localisation = MagicMock(side_effect=[
-            [{"loc": 1, "modification": "Carbamyl"}],  # First call for Carbamyl
-            [{"loc": "N-term", "modification": "Acetyl"}],  # Second call for Acetyl
+            [{"loc": 1, "modification": "Carbamyl"}],  # Carbamyl localised at position 1
+            [{"loc": "N-term", "modification": "Acetyl"}],  # Acetyl at N-terminal
+            # These won't be called since they are far from the target
+            [{"loc": 3, "modification": "Oxidation"}],
+            [{"loc": 5, "modification": "Phospho"}],
         ])
 
         # Mock PSM object with necessary attributes
@@ -275,41 +296,33 @@ class TestModificationHandler:
             spectrum_id="some_spectrum",
             is_decoy=False,
             protein_list=["some_protein"],
-            precursor_mz=208.79446854107334,
+            precursor_mz=208.79446854107334,  # Mock value
         )
-        original_precursor_mz = psm.precursor_mz
 
-        # Test case 1: Carbamyl
-        psm.precursor_mz = original_precursor_mz + (43.005814 / 3)
+        # Test Case: Localize mass shift for Carbamyl/Acetyl modifications (close masses)
+        original_precursor_mz = psm.precursor_mz
+        target_mass_shift = 43.005814  # We will aim for a mass shift close to this
+
+        # Set the precursor m/z so it corresponds to a mass shift close to 43.005814 (Carbamyl)
+        psm.precursor_mz = original_precursor_mz + (target_mass_shift / 3)
+
         localized_modifications = mod_handler.localize_mass_shift(psm)
 
+        # Assertions to ensure only close modifications are tested
         assert localized_modifications is not None
+        assert len(localized_modifications) > 0
+
+        # Ensure Carbamyl is localized correctly
         assert localized_modifications[0].Localised_mass_shift[0].loc == 1
         assert localized_modifications[0].Localised_mass_shift[0].modification == "Carbamyl"
 
-        # Test case 2: Acetyl
-        # psm.precursor_mz = original_precursor_mz + (42.010565 / 3)
-        # localized_modifications = mod_handler.localize_mass_shift(psm)
+        # Ensure Acetyl is also tested and localized
+        assert localized_modifications[1].Localised_mass_shift[0].loc == "N-term"
+        assert localized_modifications[1].Localised_mass_shift[0].modification == "Acetyl"
 
-        # assert localized_modifications is not None
-        # assert localized_modifications[0].Localised_mass_shift[0].loc == "N-term"
-        # assert localized_modifications[0].Localised_mass_shift[0].modification == "Acetyl"
+        # Ensure far masses are not tested (Oxidation and Phospho should be skipped)
+        assert mod_handler.get_localisation.call_count == 2  # Only close ones should be called
 
-    # def test_localize_mass_shift2(self, setup_modhandler):
-    #     mod_handler, _ = setup_modhandler
-
-    #     psm = PSM(
-    #         peptidoform="ART[Deoxy]HR/3",
-    #         spectrum_id="some_spectrum",
-    #         is_decoy=False,
-    #         protein_list=["some_protein"],
-    #         precursor_mz=208.79446854107334,
-    #     )
-    #     orginal_precursor_mz = psm.precursor_mz
-
-    #     psm.precursor_mz = orginal_precursor_mz + (((43.005814 + 42.010565) / 3))
-    #     localized_modifications = mod_handler.localize_mass_shift(psm)
-    #     print(localized_modifications)
 
     def test_check_protein_level(self, setup_modhandler):
         mod_handler, psm = setup_modhandler
