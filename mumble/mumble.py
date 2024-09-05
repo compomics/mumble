@@ -411,7 +411,8 @@ class _ModificationHandler:
             ],
         )
         
-        monoisotopic_masses, modifications = self._generate_modifications_combinations_lists(2)
+        self.monoisotopic_masses, self.modifications_names = self._generate_modifications_combinations_lists(2)
+
 
     def _generate_modifications_combinations_lists(self,combination_length=1):
         """
@@ -547,25 +548,59 @@ class _ModificationHandler:
 
         # get all potential modifications
         try:
-            potential_modifications_indices = self._binary_range_search(self.modification_df["monoisotopic_mass"].to_numpy(),mass_shift,self.mass_error)
-            potential_modifications = self.modification_df[potential_modifications_indices[0]:potential_modifications_indices[1]]["name"]
+            potential_modifications_indices = self._binary_range_search(self.monoisotopic_masses,mass_shift,self.mass_error)
+            potential_modifications_tuples = self.modifications.names[potential_modifications_indices]
         except KeyError:
             return None
-        localized_modifications = []
-        for potential_mod in potential_modifications:
 
-            localized_mod = self.get_localisation(
-                psm,
-                potential_mod,
-                self.name_to_mass_residue_dict[potential_mod].residues,
-                self.name_to_mass_residue_dict[potential_mod].restrictions,
-            )
-            if localized_mod:
-                    localized_modifications.extend(localized_mod)
-            else:
+        feasible_modifications_tuples = []
+        Potential_modification_candidate = namedtuple("Potential_modification_candidate",[list(Localised_mass_shift)])
+
+        
+        # memo_cache = set()
+        # check combinations of potential modifications
+        for potential_mods_tuple in potential_modifications_tuples:
+            # Convert tuple to a hashable type for memoization
+            # tuple_key = tuple(potential_mods_tuple)
+            # if tuple_key in memo_cache:
+            #     if not memo_cache[tuple_key]:
+            #         continue  # Skip this tuple if it has already been found infeasible
+            
+            localized_modification_tuple_positions = []
+            feasible = True
+
+            for i, mod_name in enumerate(potential_mods_tuple):
+                residues = self.name_to_mass_residue_dict[mod_name].residues
+                restrictions = self.name_to_mass_residue_dict[mod_name].restrictions
+
+                localized_mod = self.get_localisation(psm, mod_name, residues, restrictions)
+
+                if localized_mod:
+                    localized_modification_tuple_positions.append(localized_mod.loc)
+                    
+                    # Check if new combination is feasible
+                    if i > 0:  # No need to check feasibility for the first element
+                        for combination in itertools.product(*localized_modification_tuple_positions):
+                            if len(set(combination)) != len(localized_modification_tuple_positions):
+                                feasible = False
+                                break
+                        if not feasible:
+                            break
+                else:
+                    feasible = False
+                    break
+            
+            # Update memoization cache
+            # self.memo_cache[tuple_key] = feasible
+            
+            if not feasible:
+                # Skip further processing for this tuple
                 continue
+            
+            feasible_modifications_tuples.append(potential_mods_tuple)
+        
+        return feasible_modifications_tuples if feasible_modifications_tuples else None
 
-        return localized_modifications if localized_modifications else None
 
     def _binary_range_search(self, arr, target, error) -> tuple[int,int]:
         """
