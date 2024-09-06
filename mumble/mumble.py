@@ -37,7 +37,7 @@ class PSMHandler:
         self.modification_handler = _ModificationHandler(
             mass_error=mass_error,
             add_aa_combinations=aa_combinations,
-            fasta_file=fasta_file,
+            fasta_file=fasta_file
         )
         self.psm_file_name = None
 
@@ -333,6 +333,7 @@ class _ModificationHandler:
         mass_error=0.02,
         add_aa_combinations=0,
         fasta_file=None,
+        combination_length=1,
     ) -> None:
         """
         Constructor of the class.
@@ -343,6 +344,7 @@ class _ModificationHandler:
             fasta_file (str, optional): Path to the fasta file. Defaults to None.
         """
         # TODO add amino acid variations (mutation) as flag
+        self.combination_length = combination_length
         self.get_unimod_database()
         if add_aa_combinations:
             if not fasta_file:
@@ -411,7 +413,7 @@ class _ModificationHandler:
             ],
         )
         
-        self.monoisotopic_masses, self.modifications_names = self._generate_modifications_combinations_lists(2)
+        self.monoisotopic_masses, self.modifications_names = self._generate_modifications_combinations_lists(self.combination_length)
 
 
     def _generate_modifications_combinations_lists(self,combination_length=1):
@@ -437,10 +439,10 @@ class _ModificationHandler:
         modifications = []
         monoisotopic_masses = []
         for r in range(1, combination_length + 1):
-            name_combinations = itertools.combinations(self.modification_df['name'], r)
+            name_combinations = itertools.combinations_with_replacement(self.modification_df['name'], r)
             modifications.extend(name_combinations)
 
-            mass_summes = [sum(mass for mass in comb) for comb in itertools.combinations(self.modification_df['monoisotopic_mass'], r)]
+            mass_summes = [sum(mass for mass in comb) for comb in itertools.combinations_with_replacement(self.modification_df['monoisotopic_mass'], r)]
             monoisotopic_masses.extend(mass_summes)
         
         # Combine masses and modifications into tuples, sort by monoisotopic mass, then unzip back into two lists
@@ -549,57 +551,62 @@ class _ModificationHandler:
         # get all potential modifications
         try:
             potential_modifications_indices = self._binary_range_search(self.monoisotopic_masses,mass_shift,self.mass_error)
-            potential_modifications_tuples = self.modifications.names[potential_modifications_indices]
+            potential_modifications_tuples = self.modifications_names[potential_modifications_indices[0]:potential_modifications_indices[1]+1]
         except KeyError:
             return None
+        Localised_mass_shift = namedtuple("Localised_mass_shift", ["loc", "modification"])
+        Modification_candidate = namedtuple("Modification_candidate",["Localised_mass_shift"]) 
 
-        feasible_modifications_tuples = []
-        Potential_modification_candidate = namedtuple("Potential_modification_candidate",[list(Localised_mass_shift)])
-
+        feasible_modifications_candidates = []
         
         # memo_cache = set()
         # check combinations of potential modifications
-        for potential_mods_tuple in potential_modifications_tuples:
+        for potential_mods_combination in potential_modifications_tuples:
             # Convert tuple to a hashable type for memoization
             # tuple_key = tuple(potential_mods_tuple)
             # if tuple_key in memo_cache:
             #     if not memo_cache[tuple_key]:
             #         continue  # Skip this tuple if it has already been found infeasible
             
-            localized_modification_tuple_positions = []
+            localized_modification_positions = []
             feasible = True
 
-            for i, mod_name in enumerate(potential_mods_tuple):
+            # Collect all possible localization positions for each modification
+            for mod_name in potential_mods_combination:
                 residues = self.name_to_mass_residue_dict[mod_name].residues
                 restrictions = self.name_to_mass_residue_dict[mod_name].restrictions
 
-                localized_mod = self.get_localisation(psm, mod_name, residues, restrictions)
+                localized_mods = self.get_localisation(psm, mod_name, residues, restrictions)
 
-                if localized_mod:
-                    localized_modification_tuple_positions.append(localized_mod.loc)
-                    
-                    # Check if new combination is feasible
-                    if i > 0:  # No need to check feasibility for the first element
-                        for combination in itertools.product(*localized_modification_tuple_positions):
-                            if len(set(combination)) != len(localized_modification_tuple_positions):
-                                feasible = False
-                                break
-                        if not feasible:
-                            break
+                if localized_mods:
+                    # Collect positions for the current modification
+                    localized_modification_positions.append(localized_mods)
                 else:
                     feasible = False
                     break
-            
-            # Update memoization cache
-            # self.memo_cache[tuple_key] = feasible
-            
+
+            # If any modification in the tuple is not feasible, skip this tuple
             if not feasible:
-                # Skip further processing for this tuple
                 continue
-            
-            feasible_modifications_tuples.append(potential_mods_tuple)
-        
-        return feasible_modifications_tuples if feasible_modifications_tuples else None
+
+            # Generate all possible position combinations for the modifications
+            possible_combinations = list(itertools.product(*localized_modification_positions))
+
+            # Filter out combinations where two modifications would occupy the same position
+            valid_combinations = []
+            for combination in possible_combinations:
+                positions = [mod['loc'] for mod in combination]
+                if len(set(positions)) == len(positions):  # No overlap in positions
+                    # Create a list of Localised_mass_shift namedtuples for this valid combination
+                    valid_localized_mods = [Localised_mass_shift(loc=mod['loc'], modification=mod['modification']) for mod in combination]
+                    # Store the combination in the Potential_modification_candidate
+                    feasible_modifications_candidates.append(Modification_candidate(Localised_mass_shift=valid_localized_mods))
+
+            # If there are valid combinations, store them
+            if valid_combinations:
+                feasible_modifications_candidates.append(valid_combinations)
+
+        return feasible_modifications_candidates if feasible_modifications_candidates else None
 
 
     def _binary_range_search(self, arr, target, error) -> tuple[int,int]:
