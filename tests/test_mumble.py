@@ -249,6 +249,18 @@ class TestModificationHandler:
 
         # Assertions
         assert result == expected_output
+        
+    # Helper function to compare expected and actual localisations
+    def localisation_matches(self, expected, actual):
+        """
+        This function checks if the expected localisation is found within the actual Modification_candidate.
+        It ignores the order of the Localised_mass_shift items.
+        """
+        expected_set = {frozenset(localisation.items()) for localisation in expected}
+        actual_set = {frozenset({"loc": loc.loc, "modification": loc.modification}.items()) for loc in actual.Localised_mass_shift}
+
+        return expected_set == actual_set
+
 
     # TODO: refactor after changes in localize_mass_shift
     def test_localize_mass_shift_combination_length_1(self, setup_modhandler):
@@ -307,19 +319,39 @@ class TestModificationHandler:
 
         # Assertions to ensure only close modifications are tested
         assert localized_modifications is not None
-        assert len(localized_modifications) == 2
+        assert len(localized_modifications) == 4
+        
+        expected_localisations = [
+            [
+                {"loc": 1, "modification": "mod2"},
+            ],
+            [
+                {"loc": "N-term", "modification": "mod3"},
+            ],
+            [
+                {"loc": "N-term", "modification": "mod2"},
+            ],
+            [
+                {"loc": 1, "modification": "mod3"}
+            ]
+        ]           
 
-        # First combination should be (loc1, mod1) for Carbamyl and (loc2, mod2) for Acetyl
-        assert localized_modifications[0].Localised_mass_shift[0].loc == 1
-        assert localized_modifications[0].Localised_mass_shift[0].modification == "mod2"
-        assert localized_modifications[0].Localised_mass_shift[1].loc == "N-term"
-        assert localized_modifications[0].Localised_mass_shift[1].modification == "mod3"
+        # Check if every expected_localisations is present
+        for expected in expected_localisations:
+            match_found = any(self.localisation_matches(expected, actual) for actual in localized_modifications)
+            assert match_found, f"Expected localisation {expected} not found in localized_modifications."
 
-        # Second combination should swap positions for Carbamyl and Acetyl
-        assert localized_modifications[1].Localised_mass_shift[0].loc == "N-term"
-        assert localized_modifications[1].Localised_mass_shift[0].modification == "mod2"
-        assert localized_modifications[1].Localised_mass_shift[1].loc == 1
-        assert localized_modifications[1].Localised_mass_shift[1].modification == "mod3"
+        # # First combination should be (loc1, mod1) for Carbamyl and (loc2, mod2) for Acetyl
+        # assert localized_modifications[0].Localised_mass_shift[0].loc == 1
+        # assert localized_modifications[0].Localised_mass_shift[0].modification == "mod2"
+        # assert localized_modifications[0].Localised_mass_shift[1].loc == "N-term"
+        # assert localized_modifications[0].Localised_mass_shift[1].modification == "mod3"
+
+        # # Second combination should swap positions for Carbamyl and Acetyl
+        # assert localized_modifications[1].Localised_mass_shift[0].loc == "N-term"
+        # assert localized_modifications[1].Localised_mass_shift[0].modification == "mod2"
+        # assert localized_modifications[1].Localised_mass_shift[1].loc == 1
+        # assert localized_modifications[1].Localised_mass_shift[1].modification == "mod3"
 
         # Ensure far masses are not tested (Oxidation and Phospho should be skipped)
         assert mod_handler.get_localisation.call_count == 2  # Only close ones should be called
@@ -328,20 +360,23 @@ class TestModificationHandler:
             # Create an instance of the handler
             mod_handler, _ = setup_modhandler
 
-            # Mock necessary attributes related to the UniMod database
+            # Value's not important for test this since get_localisation gets mocked. Needed so function doesn't crash when fetching the residues before calling get_localisation.
             mod_handler.name_to_mass_residue_dict = {
                 "mod3": MagicMock(residues=['C'], restrictions=None),
                 "mod2": MagicMock(residues=['N-term'], restrictions=None),
                 "mod1": MagicMock(residues=['M'], restrictions=None),
                 "mod4": MagicMock(residues=['S', 'T', 'Y'], restrictions=None),
+                "mod5": MagicMock(residues=['S', 'T', 'Y'], restrictions=None),
+
             }
 
-            # Dummy data for the modifications based on your comment
+            # If this is updated the order of get_localisation MagicMock might need to be changed too
             modifications = [
                 ("mod1", 15.994915, "Far", None, "M"),
-                ("mod2", 43.005814, "Close", None, "K"),
-                ("mod3", 43.015814, "Close", None, "K"),
+                ("mod2", 43.005814, "Close_combined", None, "K"),
+                ("mod3", 43.015814, "Close_combined", None, "K"),
                 ("mod4", 79.966331, "Far", None, "S"),
+                ("mod5", (43.005814 + 43.005814), "Close_alone", None, "K"),
             ]
 
             # Create the DataFrame
@@ -359,9 +394,11 @@ class TestModificationHandler:
             mod_handler.monoisotopic_masses, mod_handler.modifications_names = mod_handler._generate_modifications_combinations_lists(2)
             
             # Mock get_localisation to return valid positions for the modifications
+            # These should be in order with the combinations sorted on weights so if the list modifications changes this will probably need to be updated too
             mod_handler.get_localisation = MagicMock(side_effect=[
                 [{"loc": 1, "modification": "mod2"},{"loc": "N-term", "modification": "mod2"}],  # Carbamyl localised at position 1 or N-terminal
                 [{"loc": 1, "modification": "mod2"},{"loc": "N-term", "modification": "mod2"}], 
+                [{"loc": 1, "modification": "mod5"}],
                 [{"loc": 1, "modification": "mod2"},{"loc": "N-term", "modification": "mod2"}], 
                 [{"loc": "N-term", "modification": "mod3"},{"loc": 1, "modification": "mod3"}],  # Acetyl at N-terminal or 1
                 # These won't be called since they are far from the target
@@ -389,80 +426,35 @@ class TestModificationHandler:
 
             # Assertions to ensure only close modifications are tested
             assert localized_modifications is not None
-            assert len(localized_modifications) == 4
+            assert len(localized_modifications) == 5 # len((mod2,mod2);(mod2,mod2);(mod2,mod3);(mod3,mod2);(mod5,))
 
-
-            expected_localisations_1 = [
-                {"loc": 1, "modification": "mod2"},
-                {"loc": "N-term", "modification": "mod2"}
+            expected_localisations = [
+                [
+                    {"loc": 1, "modification": "mod2"},
+                    {"loc": "N-term", "modification": "mod2"}
+                ],
+                [
+                    {"loc": "N-term", "modification": "mod2"},
+                    {"loc": 1, "modification": "mod3"}
+                ],
+                [
+                    {"loc": "N-term", "modification": "mod3"},
+                    {"loc": 1, "modification": "mod2"}
+                ],
+                [
+                    {"loc": 1, "modification": "mod5"}
+                ]
             ]
 
-            # TODO: check if duplicates should be allowed
-            expected_localisations_2 = [
-                {"loc": 1, "modification": "mod2"},
-                {"loc": "N-term", "modification": "mod2"}
-            ]
-
-            expected_localisations_3 = [
-                {"loc": "N-term", "modification": "mod2"},
-                {"loc": 1, "modification": "mod3"}
-            ]
-
-            expected_localisations_4 = [
-                {"loc": "N-term", "modification": "mod3"},
-                {"loc": 1, "modification": "mod2"}
-            ]
-
-            actual_localisations_1 = [
-                {"loc": localized_modifications[0].Localised_mass_shift[0].loc, "modification": localized_modifications[0].Localised_mass_shift[0].modification},
-                {"loc": localized_modifications[0].Localised_mass_shift[1].loc, "modification": localized_modifications[0].Localised_mass_shift[1].modification}
-            ]
-
-            actual_localisations_2 = [
-                {"loc": localized_modifications[1].Localised_mass_shift[0].loc, "modification": localized_modifications[1].Localised_mass_shift[0].modification},
-                {"loc": localized_modifications[1].Localised_mass_shift[1].loc, "modification": localized_modifications[1].Localised_mass_shift[1].modification}
-            ]
-
-            actual_localisations_3 = [
-                {"loc": localized_modifications[2].Localised_mass_shift[0].loc, "modification": localized_modifications[2].Localised_mass_shift[0].modification},
-                {"loc": localized_modifications[2].Localised_mass_shift[1].loc, "modification": localized_modifications[2].Localised_mass_shift[1].modification}
-            ]
-
-            actual_localisations_4 = [
-                {"loc": localized_modifications[3].Localised_mass_shift[0].loc, "modification": localized_modifications[3].Localised_mass_shift[0].modification},
-                {"loc": localized_modifications[3].Localised_mass_shift[1].loc, "modification": localized_modifications[3].Localised_mass_shift[1].modification}
-            ]
-
-            # Sort the actual and expected localisations to ignore the order within each modification group
-            actual_localisations_1_sorted = sorted(actual_localisations_1, key=lambda x: (str(x['loc']), x['modification']))
-            actual_localisations_2_sorted = sorted(actual_localisations_2, key=lambda x: (str(x['loc']), x['modification']))
-            actual_localisations_3_sorted = sorted(actual_localisations_3, key=lambda x: (str(x['loc']), x['modification']))
-            actual_localisations_4_sorted = sorted(actual_localisations_4, key=lambda x: (str(x['loc']), x['modification']))
-
-
-            expected_localisations_1_sorted = sorted(expected_localisations_1, key=lambda x: (str(x['loc']), x['modification']))
-            expected_localisations_2_sorted = sorted(expected_localisations_2, key=lambda x: (str(x['loc']), x['modification']))
-            expected_localisations_3_sorted = sorted(expected_localisations_3, key=lambda x: (str(x['loc']), x['modification']))
-            expected_localisations_4_sorted = sorted(expected_localisations_4, key=lambda x: (str(x['loc']), x['modification']))
-
-            # Sort the top-level modifications
-
-            actual_localisations_sorted = sorted(
-                [actual_localisations_1_sorted, actual_localisations_2_sorted, actual_localisations_3_sorted, actual_localisations_4_sorted],
-                key=lambda x: (str(x[0]['loc']), x[0]['modification'])
-            )
-
-            expected_localisations_sorted = sorted(
-                [expected_localisations_1_sorted, expected_localisations_2_sorted, expected_localisations_3_sorted, expected_localisations_4_sorted],
-                key=lambda x: (str(x[0]['loc']), x[0]['modification'])
-            )
-
-            assert actual_localisations_sorted == expected_localisations_sorted
+            # Check if every expected_localisations is present
+            for expected in expected_localisations:
+                match_found = any(self.localisation_matches(expected, actual) for actual in localized_modifications)
+                assert match_found, f"Expected localisation {expected} not found in localized_modifications."
 
             # Ensure far masses are not tested (Oxidation and Phospho should be skipped)
-            assert mod_handler.get_localisation.call_count == 4  # Only close ones should be called
-
-
+            assert mod_handler.get_localisation.call_count == 5  # Only close ones should be called
+            
+            
     def test_check_protein_level(self, setup_modhandler):
         mod_handler, psm = setup_modhandler
 
@@ -520,11 +512,14 @@ class TestModificationHandler:
         # Expected results
         expected_masses = [
             10.0,
+            10.0 + 10.0,
             20.0,
             10.0 + 20.0,
+            20.0 + 20.0,
             40.0,
             10.0 + 40.0,
             20.0 + 40.0,
+            40.0 + 40.0,
         ]
         expected_combinations = [
             ("mod1",),
@@ -553,22 +548,47 @@ class TestModificationHandler:
 
         # Expected results
         expected_masses = [
-            10.0,
-            20.0,
-            10.0 + 20.0,
-            40.0,
-            10.0 + 40.0,
-            20.0 + 40.0,
-            10.0 + 20.0 + 40.0
+            10.0, # mod1 (10)
+            10.0 + 10.0, # mod1 + mod1 (20)
+            20.0, # mod3 (20)
+            10.0 + 10.0 + 10.0, # mod1 + mod1 + mod1 (30)
+            10.0 + 20.0, # mod1 + mod3 (30)
+            20.0 + 20.0, # mod3 + mod3 (40)
+            10.0 + 10.0 + 20.0, # mod1 + mod1 + mod3 (40)
+            40.0, # mod2 (40)
+            10.0 + 40.0, # mod1 + mod2 (50)
+            10.0 + 20.0 + 20.0, # mod1 + mod3 + mod3 (50)
+            20.0 + 40.0, # mod3 + mod2 (60)
+            20.0 + 20.0 + 20.0, # mod3 + mod3 + mod3 (60)
+            10.0 + 10.0 + 40.0,  # mod1 + mod1 + mod2 (60)
+            10.0 + 20.0 + 40.0, # mod1 + mod3 + mod2 (70)
+            40.0 + 40.0, # mod2 + mod2 (80)
+            20.0 + 20.0 + 40.0, # mod3 + mod3 + mod2 (80)
+            10.0 + 40.0 + 40.0, # mod1 + mod2 + mod2 (90)
+            20.0 + 40.0 + 40.0, # mod3 + mod3 + mod2 (100)
+            40.0 + 40.0 + 40.0, # mod2 + mod2 + mod2 (120)
         ]
+        
         expected_combinations = [
-            ("mod1",),
-            ("mod3",),
-            ("mod1","mod3"),
-            ("mod2",),
-            ("mod1", "mod2"),
-            ("mod3", "mod2"),
-            ("mod1", "mod2", "mod3"),
+            ("mod1",),                          # 10.0
+            ("mod1", "mod1",),                  # 20.0
+            ("mod3",),                          # 20.0
+            ("mod1", "mod1", "mod1",),          # 30.0
+            ("mod1", "mod3",),                  # 30.0
+            ("mod3", "mod3",),                  # 40.0
+            ("mod1", "mod1", "mod3",),          # 40.0
+            ("mod2",),                          # 40.0
+            ("mod1", "mod1", "mod3",),          # 50.0
+            ("mod1", "mod2",),                  # 50.0
+            ("mod3", "mod2",),                  # 60.0
+            ("mod3", "mod3", "mod3",),          # 60.0
+            ("mod1", "mod1", "mod2",),          # 60.0
+            ("mod1", "mod3", "mod2",),          # 70.0
+            ("mod2", "mod2",),                  # 80.0
+            ("mod3", "mod3", "mod2",),          # 80.0
+            ("mod1", "mod2", "mod2",),          # 90.0
+            ("mod3", "mod2", "mod2",),          # 100.0
+            ("mod2", "mod2", "mod2",)           # 120.0
         ]
 
         # Assertions for masses
