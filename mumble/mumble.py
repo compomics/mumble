@@ -74,7 +74,7 @@ class PSMHandler:
         Apply a modification tuple to a peptidoform.
 
         Args:
-            modification_tuple_list list(tuple): List of tuples containing the location(int) and the modification name(str)
+            modification_tuple_list list(tuple): List of Modification_candidate namedtuple, containg a list of Localised_mass_shift nampedtuple
             peptidoform (psm_utils.Peptidoform): Peptidoform object
 
         return:
@@ -515,7 +515,7 @@ class _ModificationHandler:
             restrictions (list): List of restrictions
 
             return:
-                list: List of localised mass shifts
+                list: List of localised_mass_shift
         """
         loc_list = []
         Localised_mass_shift = namedtuple("Localised_mass_shift", ["loc", "modification"])
@@ -572,7 +572,7 @@ class _ModificationHandler:
             psm (psm_utils.PSM): PSM object
 
         return:
-            list: List of localised mass shifts
+            list: List of Modification_candidate([localised_mass_shift])
         """
 
         expmass = mz_to_mass(psm.precursor_mz, psm.get_precursor_charge())
