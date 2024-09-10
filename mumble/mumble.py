@@ -450,18 +450,32 @@ class _ModificationHandler:
                 - List[tuple]: A list of tuples, where each tuple contains a combination of modification names
                             corresponding to the summed monoisotopic masses.
         """
-        # generate modifcations combinations and calculate summed mass
-        modifications = []
-        monoisotopic_masses = []
+
         # remove duplicates from modification_df
         modification_filtered_df = self.modification_df[['name', 'monoisotopic_mass']].drop_duplicates()
-        for r in range(1, combination_length + 1):
-            name_combinations = itertools.combinations_with_replacement(modification_filtered_df['name'], r)
-            modifications.extend(name_combinations)
-
-            mass_summes = [sum(mass for mass in comb) for comb in itertools.combinations_with_replacement(modification_filtered_df['monoisotopic_mass'], r)]
-            monoisotopic_masses.extend(mass_summes)
         
+        # add mods and masses for tuples with a single mod
+        modifications = [(item,) for item in modification_filtered_df['name']]
+        monoisotopic_masses = modification_filtered_df['monoisotopic_mass'].to_list()
+        
+        # only need to sum the masses when there's more then 1 mod
+        if combination_length > 1:
+            for r in range(2, combination_length + 1):
+                original_length = len(modifications)
+                name_combinations = itertools.combinations_with_replacement(modification_filtered_df['name'], r)
+                modifications.extend(name_combinations)
+
+                mass_summes = [
+                    sum(mass for mass in comb) 
+                    for comb in track(
+                        itertools.combinations_with_replacement(modification_filtered_df['monoisotopic_mass'], r), 
+                        description=f"Calculating summed masses for combinations with length {r}",
+                        total=(len(modifications)-original_length)
+                        )
+                ]
+                monoisotopic_masses.extend(mass_summes)
+        
+
         # Combine masses and modifications into tuples, sort by monoisotopic mass, then unzip back into two lists
         combined = sorted(zip(monoisotopic_masses, modifications))
             
