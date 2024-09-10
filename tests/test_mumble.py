@@ -80,7 +80,8 @@ class TestPSMHandler:
 
         mod_handler.aa_sub_dict = {"His->Ala": ("H", "A")}
 
-        mod_handler.localize_mass_shift.return_value = [("N-term", "Acetyl")]
+        # test 2 seprate Modification_candidate
+        mod_handler.localize_mass_shift.return_value = [Modification_candidate(Localised_mass_shifts=[Localised_mass_shift("N-term", "Acetyl")])]
         new_psms = psm_handler._get_modified_peptidoforms(psm, keep_original=True)
 
         assert isinstance(new_psms, list)
@@ -88,13 +89,22 @@ class TestPSMHandler:
         assert new_psms[0].peptidoform.properties["n_term"] == ["Acetyl"]
         assert new_psms[1] == psm
 
-        mod_handler.localize_mass_shift.return_value = [(1, "Carbamyl"), (4, "Carbamyl")]
+        # test 2 seprate Modification_candidate
+        mod_handler.localize_mass_shift.return_value = [Modification_candidate(Localised_mass_shifts=[Localised_mass_shift(1, "Carbamyl")]),Modification_candidate(Localised_mass_shifts=[Localised_mass_shift(4, "Carbamyl")])]
         new_psms = psm_handler._get_modified_peptidoforms(psm, keep_original=False)
 
         assert isinstance(new_psms, list)
         assert len(new_psms) == 2
         assert new_psms[0].peptidoform == Peptidoform("AR[Carbamyl]T[Deoxy]HR")
         assert new_psms[1].peptidoform == Peptidoform("ART[Deoxy]HR[Carbamyl]")
+        
+        # test combination of Localised_mass_shift inside 1 Modification_candidate
+        mod_handler.localize_mass_shift.return_value = [Modification_candidate(Localised_mass_shifts=[Localised_mass_shift(1, "Carbamyl"), Localised_mass_shift(4, "Carbamyl")])]
+        new_psms = psm_handler._get_modified_peptidoforms(psm, keep_original=False)
+
+        assert isinstance(new_psms, list)
+        assert len(new_psms) == 1 # 1 combined psm expected
+        assert new_psms[0].peptidoform == Peptidoform("AR[Carbamyl]T[Deoxy]HR[Carbamyl]") # combination of mods
 
     def test_add_modified_psms(self, setup_psmhandler):
         psm_handler, mod_handler, psm = setup_psmhandler
