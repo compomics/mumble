@@ -110,8 +110,8 @@ class TestPSMHandler:
         psm_handler, mod_handler, psm = setup_psmhandler
 
         psm_list = [psm]
-        mod_handler.localize_mass_shift.return_value = [("N-term", "mod1")]
-        new_psm_list = psm_handler.add_modified_psms(psm_list)
+        mod_handler.localize_mass_shift.return_value = [Modification_candidate(Localised_mass_shifts=[Localised_mass_shift("N-term", "mod1")])]
+        new_psm_list = psm_handler.add_modified_psms(psm_list, keep_original=True)
 
         assert isinstance(new_psm_list, PSMList)
         assert len(new_psm_list) > 1
