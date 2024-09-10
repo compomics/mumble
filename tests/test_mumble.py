@@ -271,7 +271,7 @@ class TestModificationHandler:
         It ignores the order of the Localised_mass_shift items.
         """
         expected_set = {frozenset(localisation.items()) for localisation in expected}
-        actual_set = {frozenset({"loc": loc.loc, "modification": loc.modification}.items()) for loc in actual.Localised_mass_shift}
+        actual_set = {frozenset({"loc": loc.loc, "modification": loc.modification}.items()) for loc in actual.Localised_mass_shifts}
 
         return expected_set == actual_set
 
@@ -306,12 +306,13 @@ class TestModificationHandler:
         
         # Mock get_localisation to return valid positions for the modifications
         mod_handler.get_localisation = MagicMock(side_effect=[
-            [{"loc": 1, "modification": "mod2"},{"loc": "N-term", "modification": "mod2"}],  # Carbamyl localised at position 1 or N-terminal
-            [{"loc": "N-term", "modification": "mod3"},{"loc": 1, "modification": "mod3"}],  # Acetyl at N-terminal or 1
+            [Localised_mass_shift(loc=1, modification="mod2"), Localised_mass_shift(loc="N-term", modification="mod2")],  # Carbamyl localised at position 1 or N-terminal
+            [Localised_mass_shift(loc="N-term", modification="mod3"), Localised_mass_shift(loc=1, modification="mod3")],  # Acetyl at N-terminal or 1
             # These won't be called since they are far from the target
-            [{"loc": 3, "modification": "Oxidation"}],
-            [{"loc": 5, "modification": "Phospho"}],
+            [Localised_mass_shift(loc=3, modification="Oxidation")],
+            [Localised_mass_shift(loc=5, modification="Phospho")],
         ])
+
 
         # Mock PSM object with necessary attributes
         psm = PSM(
@@ -398,14 +399,14 @@ class TestModificationHandler:
             # Mock get_localisation to return valid positions for the modifications
             # These should be in order with the combinations sorted on weights so if the list modifications changes this will probably need to be updated too
             mod_handler.get_localisation = MagicMock(side_effect=[
-                [{"loc": 1, "modification": "mod2"},{"loc": "N-term", "modification": "mod2"}],  # Carbamyl localised at position 1 or N-terminal
-                [{"loc": 1, "modification": "mod2"},{"loc": "N-term", "modification": "mod2"}], 
-                [{"loc": 1, "modification": "mod5"}],
-                [{"loc": 1, "modification": "mod2"},{"loc": "N-term", "modification": "mod2"}], 
-                [{"loc": "N-term", "modification": "mod3"},{"loc": 1, "modification": "mod3"}],  # Acetyl at N-terminal or 1
+                [Localised_mass_shift(loc=1, modification="mod2"), Localised_mass_shift(loc="N-term", modification="mod2")],  # Carbamyl localised at position 1 or N-terminal
+                [Localised_mass_shift(loc=1, modification="mod2"), Localised_mass_shift(loc="N-term", modification="mod2")], 
+                [Localised_mass_shift(loc=1, modification="mod5")],
+                [Localised_mass_shift(loc=1, modification="mod2"), Localised_mass_shift(loc="N-term", modification="mod2")], 
+                [Localised_mass_shift(loc="N-term", modification="mod3"), Localised_mass_shift(loc=1, modification="mod3")],  # Acetyl at N-terminal or 1
                 # These won't be called since they are far from the target
-                [{"loc": 3, "modification": "mod1"}],
-                [{"loc": 5, "modification": "mod4"}],
+                [Localised_mass_shift(loc=3, modification="mod1")],
+                [Localised_mass_shift(loc=5, modification="mod4")],
             ])
 
             # Mock PSM object with necessary attributes
