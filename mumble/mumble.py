@@ -210,7 +210,7 @@ class PSMHandler:
             psm_list (str, list, PSMList): Path to the psm file, list of PSMs or PSMList object
             psm_file_type (str, optional): Type of the input file to read with PSM_utlis.io.read_file. Defaults to "infer" only used if psm_list is filepath.
             generate_modified_decoys (bool, optional): Generate modified decoys. Defaults to False.
-            keep_original (bool, optional): Keep the original PSMs. Defaults to Fa  lse.
+            keep_original (bool, optional): Keep the original PSMs. Defaults to False.
 
         return:
             psm_utils.PSMList: PSMList object
