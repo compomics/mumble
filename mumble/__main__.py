@@ -68,6 +68,22 @@ from mumble import PSMHandler
     default=False,
     show_default=True,
 )
+@click.option(
+    "--num_modifications_combination",
+    help="Maximum number of modifications per combination. All lower numbers will be included as well.",
+    type=click.INT,
+    default=1,
+    show_default=True,
+)
+@click.option(
+    "--exclude-mutations",
+    help="If set, modifications with the classification 'AA substitution' will be excluded.",
+    type=click.BOOL,
+    is_flag=True,
+    show_default=True,
+)
+
+
 def main(
     input_file,
     filetype_read,
@@ -78,6 +94,8 @@ def main(
     filetype_write,
     generate_modified_decoys,
     keep_original,
+    num_modifications_combination,
+    exclude_mutations
 ):
     """
     Finding the perfect match for your mass shift.\n
@@ -86,7 +104,7 @@ def main(
     The `main` function is the entry point for processing Peptide Spectrum Matches (PSMs) with potential mass modifications. It reads the input PSM file, identifies possible modifications based on mass shifts found by the search engine, and generates new PSM entries with these modifications. The function can handle different file types, apply amino acid combination modifications, and incorporate decoy sequences if specified. The resulting modified PSM list can be output in various formats, allowing for easy integration into downstream analysis pipelines.
     """
     psm_handler = PSMHandler(
-        aa_combinations=aa_combinations, fasta_file=fasta_file, mass_error=mass_error
+        aa_combinations=aa_combinations, fasta_file=fasta_file, mass_error=mass_error, combination_length=num_modifications_combination, exclude_mutations=exclude_mutations
     )
     modified_psm_list = psm_handler.add_modified_psms(
         input_file,

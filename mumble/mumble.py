@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 class PSMHandler:
     """Class that contains all information about the input file"""
 
-    def __init__(self, aa_combinations=0, fasta_file=None, mass_error=0.02, **kwargs) -> None:
+    def __init__(self, aa_combinations=0, fasta_file=None, mass_error=0.02, combination_length=1, exclude_mutations=False, **kwargs) -> None:
         """
         Constructor of the class.
 
@@ -31,13 +31,16 @@ class PSMHandler:
             aa_combinations (int, optional): Number of amino acid combinations to add as modification. Defaults to 0.
             fasta_file (str, optional): Path to the fasta file. Defaults to None.
             mass_error (float, optional): Mass error for the mass shift. Defaults to 0.02.
+            exclude_mutations (bool, optional): If True, modifications with the classification 'AA substitution' will be excluded. Defaults to False.
         """
 
         # initialize modification seeker
         self.modification_handler = _ModificationHandler(
             mass_error=mass_error,
             add_aa_combinations=aa_combinations,
-            fasta_file=fasta_file
+            fasta_file=fasta_file,
+            combination_length=combination_length,
+            exclude_mutations=exclude_mutations
         )
         self.psm_file_name = None
 
@@ -66,62 +69,68 @@ class PSMHandler:
 
         return locations
 
-    def _return_mass_shifted_peptidoform(self, modification_tuple, peptidoform) -> Peptidoform:
+    def _return_mass_shifted_peptidoform(self, modification_tuple_list, peptidoform) -> Peptidoform:
         """
         Apply a modification tuple to a peptidoform.
 
         Args:
-            modification_tuple (tuple): Tuple containing the location(int) and the modification name(str)
+            modification_tuple_list list(tuple): List of tuples containing the location(int) and the modification name(str)
             peptidoform (psm_utils.Peptidoform): Peptidoform object
 
         return:
             psm_utils.Peptidoform: Peptidoform object
         """
 
+        new_peptidoforms = []
         new_peptidoform = deepcopy(peptidoform)
 
         existing_mod_locations = self._find_mod_locations(new_peptidoform)
-        loc, mod = modification_tuple
-        if loc in existing_mod_locations:
-            return None
-        else:
-            if loc == "N-term":
-                new_peptidoform.properties["n_term"] = [proforma.process_tag_tokens(mod)]
-            elif loc == "C-term":
-                new_peptidoform.properties["c_term"] = [proforma.process_tag_tokens(mod)]
-            elif loc == "prepeptide":
-                new_peptidoform.parsed_sequence = [
-                    (aa, None) for aa in mod
-                ] + new_peptidoform.parsed_sequence
-
-            elif loc == "postpeptide":
-                new_peptidoform.parsed_sequence = new_peptidoform.parsed_sequence + [
-                    (aa, None) for aa in mod
-                ]
-            else:
-                try:
-                    aa = new_peptidoform.parsed_sequence[loc][0]
-                except IndexError:
-                    logger.warning(f"IndexError for {peptidoform} at {loc} with {mod}")
-                    raise IndexError("Localisation is not in peptide")
-
-                # If the modification is an amino acid substitution
-                if mod in self.modification_handler.aa_sub_dict.keys():
-                    if (
-                        aa == self.modification_handler.aa_sub_dict[mod][0]
-                    ):  # TODO named tuple so indexing is not necesary and more clear
-                        new_peptidoform.parsed_sequence[loc] = (
-                            self.modification_handler.aa_sub_dict[mod][1],
-                            None,
-                        )
-                # If the modification is a standard modification
+        
+        for modification_tuple in modification_tuple_list:
+            
+            new_peptidoform = deepcopy(peptidoform)
+            for localised_mass_shift in modification_tuple.Localised_mass_shifts:
+                loc, mod = localised_mass_shift
+                if loc in existing_mod_locations:
+                    return None
                 else:
-                    new_peptidoform.parsed_sequence[loc] = (
-                        aa,
-                        [proforma.process_tag_tokens(mod)],
-                    )
+                    if loc == "N-term":
+                        new_peptidoform.properties["n_term"] = [proforma.process_tag_tokens(mod)]
+                    elif loc == "C-term":
+                        new_peptidoform.properties["c_term"] = [proforma.process_tag_tokens(mod)]
+                    elif loc == "prepeptide":
+                        new_peptidoform.parsed_sequence = [
+                            (aa, None) for aa in mod
+                        ] + new_peptidoform.parsed_sequence
 
-        return new_peptidoform
+                    elif loc == "postpeptide":
+                        new_peptidoform.parsed_sequence = new_peptidoform.parsed_sequence + [
+                            (aa, None) for aa in mod
+                        ]
+                    else:
+                        try:
+                            aa = new_peptidoform.parsed_sequence[loc][0]
+                        except IndexError:
+                            logger.warning(f"IndexError for {peptidoform} at {loc} with {mod}")
+                            raise IndexError("Localisation is not in peptide")
+
+                        # If the modification is an amino acid substitution
+                        if mod in self.modification_handler.aa_sub_dict.keys():
+                            if (
+                                aa == self.modification_handler.aa_sub_dict[mod][0]
+                            ):  # TODO named tuple so indexing is not necesary and more clear
+                                new_peptidoform.parsed_sequence[loc] = (
+                                    self.modification_handler.aa_sub_dict[mod][1],
+                                    None,
+                                )
+                        # If the modification is a standard modification
+                        else:
+                            new_peptidoform.parsed_sequence[loc] = (
+                                aa,
+                                [proforma.process_tag_tokens(mod)],
+                            )
+            new_peptidoforms.append(new_peptidoform)
+        return new_peptidoforms
 
     @staticmethod
     def _create_new_psm(psm, new_peptidoform) -> PSM:
@@ -154,15 +163,15 @@ class PSMHandler:
             list: List of modified PSMs
         """
         modified_peptidoforms = []
-        modification_list = self.modification_handler.localize_mass_shift(psm)
-        if modification_list:
-            for modification_tuple in modification_list:
-                new_proteoform = self._return_mass_shifted_peptidoform(
-                    modification_tuple, psm.peptidoform
-                )
+        modification_tuple_list = self.modification_handler.localize_mass_shift(psm)
+        if modification_tuple_list:
+            new_proteoforms_list = self._return_mass_shifted_peptidoform(
+                    modification_tuple_list, psm.peptidoform
+            )
+            for new_proteoform in new_proteoforms_list:
                 new_psm = self._create_new_psm(
-                    psm,
-                    new_proteoform,
+                        psm,
+                        new_proteoform,
                 )
                 if new_psm is not None:
                     modified_peptidoforms.append(new_psm)
@@ -170,7 +179,7 @@ class PSMHandler:
             logger.warning(f"No modifications found for {psm}")
             return None
         if keep_original:
-            modified_peptidoforms.append(psm)
+               modified_peptidoforms.append(psm)
 
         return modified_peptidoforms
 
@@ -220,7 +229,6 @@ class PSMHandler:
             description="Parsing PSMs in PSMList...",
             total=len(parsed_psm_list),
         ):
-            new_psm_list.append(psm)
             if (psm.is_decoy) & (not generate_modified_decoys):
                 continue
             new_psms = self._get_modified_peptidoforms(
@@ -334,6 +342,7 @@ class _ModificationHandler:
         add_aa_combinations=0,
         fasta_file=None,
         combination_length=1,
+        exclude_mutations=False
     ) -> None:
         """
         Constructor of the class.
@@ -342,10 +351,12 @@ class _ModificationHandler:
             mass_error (float, optional): Mass error for the mass shift. Defaults to 0.02.
             add_aa_combinations (int, optional): Number of amino acid combinations to add as modification. Defaults to 0.
             fasta_file (str, optional): Path to the fasta file. Defaults to None.
+            combination_length (int, optional): Maximum number of modifications per combination. All lower numbers will be included as well. Dfeaults to 1.
+            exclude_mutations (bool, optional): If True, modifications with the classification 'AA substitution' will be excluded. Defaults to False.
         """
         # TODO add amino acid variations (mutation) as flag
         self.combination_length = combination_length
-        self.get_unimod_database()
+        self.get_unimod_database(exclude_mutations)
         if add_aa_combinations:
             if not fasta_file:
                 raise ValueError("Fasta file is required to add amino acid combinations")
@@ -358,9 +369,12 @@ class _ModificationHandler:
         self.mass_error = mass_error
         self.fasta_file = IndexedFASTA(fasta_file, label=r"^[\n]?>([\S]*)") if fasta_file else None
 
-    def get_unimod_database(self):
+    def get_unimod_database(self, exclude_mutations=False):
         """
         Read unimod databse to a dataframe.
+        
+        Args:
+            exclude_mutations (bool, optional): If True, modifications with the classification 'AA substitution' will be excluded. Defaults to False.
         """
         unimod_db = unimod.Unimod()
         # if necesary, make distinction protein and peptide level C-term and N-term modifications
@@ -388,6 +402,8 @@ class _ModificationHandler:
                 classification = specificity.classification
                 if classification == "Isotopic label":  # Do not include isotopic labels
                     continue
+                if exclude_mutations and classification.classification == "AA substitution":
+                    continue 
                 position = specificity.position_id
                 aa = specificity.amino_acid
                 modifications.append(
@@ -426,8 +442,7 @@ class _ModificationHandler:
         The results are sorted by the summed monoisotopic masses in ascending order.
 
         Args:
-            combination_length (int): The maximum number of modifications to include in each combination. 
-                                    Defaults to 1. Combinations will include all lengths from 1 up to this value.
+            combination_length (int, optional): Maximum number of modifications per combination. All lower numbers will be included as well. Dfeaults to 1.
 
         Returns:
             tuple: A tuple containing two elements:
@@ -438,11 +453,13 @@ class _ModificationHandler:
         # generate modifcations combinations and calculate summed mass
         modifications = []
         monoisotopic_masses = []
+        # remove duplicates from modification_df
+        modification_filtered_df = self.modification_df[['name', 'monoisotopic_mass']].drop_duplicates()
         for r in range(1, combination_length + 1):
-            name_combinations = itertools.combinations_with_replacement(self.modification_df['name'], r)
+            name_combinations = itertools.combinations_with_replacement(modification_filtered_df['name'], r)
             modifications.extend(name_combinations)
 
-            mass_summes = [sum(mass for mass in comb) for comb in itertools.combinations_with_replacement(self.modification_df['monoisotopic_mass'], r)]
+            mass_summes = [sum(mass for mass in comb) for comb in itertools.combinations_with_replacement(modification_filtered_df['monoisotopic_mass'], r)]
             monoisotopic_masses.extend(mass_summes)
         
         # Combine masses and modifications into tuples, sort by monoisotopic mass, then unzip back into two lists
@@ -551,11 +568,15 @@ class _ModificationHandler:
         # get all potential modifications
         try:
             potential_modifications_indices = self._binary_range_search(self.monoisotopic_masses,mass_shift,self.mass_error)
-            potential_modifications_tuples = self.modifications_names[potential_modifications_indices[0]:potential_modifications_indices[1]+1]
+            if potential_modifications_indices:
+                potential_modifications_tuples = self.modifications_names[potential_modifications_indices[0]:potential_modifications_indices[1]+1]
+            else:
+                return []
+                
         except KeyError:
             return None
         Localised_mass_shift = namedtuple("Localised_mass_shift", ["loc", "modification"])
-        Modification_candidate = namedtuple("Modification_candidate",["Localised_mass_shift"]) 
+        Modification_candidate = namedtuple("Modification_candidate",["Localised_mass_shifts"]) 
 
         feasible_modifications_candidates = []
         
@@ -595,12 +616,12 @@ class _ModificationHandler:
             # Filter out combinations where two modifications would occupy the same position
             valid_combinations = []
             for combination in possible_combinations:
-                positions = [mod['loc'] for mod in combination]
+                positions = [mod.loc for mod in combination]
                 if len(set(positions)) == len(positions):  # No overlap in positions
                     # Create a list of Localised_mass_shift namedtuples for this valid combination
-                    valid_localized_mods = [Localised_mass_shift(loc=mod['loc'], modification=mod['modification']) for mod in combination]
+                    valid_localized_mods = [Localised_mass_shift(loc=mod.loc, modification=mod.modification) for mod in combination]
                     # Store the combination in the Potential_modification_candidate
-                    feasible_modifications_candidates.append(Modification_candidate(Localised_mass_shift=valid_localized_mods))
+                    feasible_modifications_candidates.append(Modification_candidate(Localised_mass_shifts=valid_localized_mods))
 
             # If there are valid combinations, store them
             if valid_combinations:
