@@ -76,7 +76,7 @@ from mumble import PSMHandler
     show_default=True,
 )
 @click.option(
-    "--exclude-mutations",
+    "--exclude_mutations",
     help="If set, modifications with the classification 'AA substitution' will be excluded.",
     type=click.BOOL,
     is_flag=True,
