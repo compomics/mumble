@@ -341,18 +341,6 @@ class TestModificationHandler:
             match_found = any(self.localisation_matches(expected, actual) for actual in localized_modifications)
             assert match_found, f"Expected localisation {expected} not found in localized_modifications."
 
-        # # First combination should be (loc1, mod1) for Carbamyl and (loc2, mod2) for Acetyl
-        # assert localized_modifications[0].Localised_mass_shift[0].loc == 1
-        # assert localized_modifications[0].Localised_mass_shift[0].modification == "mod2"
-        # assert localized_modifications[0].Localised_mass_shift[1].loc == "N-term"
-        # assert localized_modifications[0].Localised_mass_shift[1].modification == "mod3"
-
-        # # Second combination should swap positions for Carbamyl and Acetyl
-        # assert localized_modifications[1].Localised_mass_shift[0].loc == "N-term"
-        # assert localized_modifications[1].Localised_mass_shift[0].modification == "mod2"
-        # assert localized_modifications[1].Localised_mass_shift[1].loc == 1
-        # assert localized_modifications[1].Localised_mass_shift[1].modification == "mod3"
-
         # Ensure far masses are not tested (Oxidation and Phospho should be skipped)
         assert mod_handler.get_localisation.call_count == 2  # Only close ones should be called
 
