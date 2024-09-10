@@ -9,8 +9,13 @@ from pyteomics.fasta import IndexedFASTA
 
 from mumble.mumble import _ModificationHandler, PSMHandler
 
+# Define named tuples globally
+Localised_mass_shift = namedtuple("Localised_mass_shift", ["loc", "modification"])
+Modification_candidate = namedtuple("Modification_candidate", ["Localised_mass_shifts"])
 
 class TestPSMHandler:
+    
+
 
     @pytest.fixture
     def setup_psmhandler(self):
@@ -48,18 +53,18 @@ class TestPSMHandler:
         psm_handler, mod_handler, psm = setup_psmhandler
 
         mod_handler.aa_sub_dict = {"His->Ala": ("H", "A")}
-
-        new_peptidoform_1 = psm_handler._return_mass_shifted_peptidoform(
-            ("C-term", "Ahx2+Hsl"), psm.peptidoform
+        
+        new_peptidoform_1_list = psm_handler._return_mass_shifted_peptidoform(
+            [Modification_candidate(Localised_mass_shifts=[Localised_mass_shift(loc="C-term", modification="Ahx2+Hsl")])], psm.peptidoform
         )
-        new_peptidoform_2 = psm_handler._return_mass_shifted_peptidoform(
-            (3, "His->Ala"), psm.peptidoform
+        new_peptidoform_2_list = psm_handler._return_mass_shifted_peptidoform(
+            [Modification_candidate(Localised_mass_shifts=[Localised_mass_shift(loc=3, modification="His->Ala")])], psm.peptidoform
         )
 
-        assert new_peptidoform_1 is not None
-        assert new_peptidoform_1.properties["c_term"] == [proforma.process_tag_tokens("Ahx2+Hsl")]
-        assert new_peptidoform_2 is not None
-        assert new_peptidoform_2 == Peptidoform("ART[Deoxy]AR")
+        assert new_peptidoform_1_list is not None
+        assert new_peptidoform_1_list[0].properties["c_term"] == [proforma.process_tag_tokens("Ahx2+Hsl")]
+        assert new_peptidoform_2_list is not None
+        assert new_peptidoform_2_list[0] == Peptidoform("ART[Deoxy]AR")
 
     def test_create_new_psm(self, setup_psmhandler):
         psm_handler, _, psm = setup_psmhandler
@@ -215,7 +220,6 @@ class TestModificationHandler:
         mod_handler.check_protein_level = MagicMock(return_value=[("prepeptide", "mod1")])
 
         # Expected output
-        Localised_mass_shift = namedtuple("Localised_mass_shift", ["loc", "modification"])
         expected_output = [
             Localised_mass_shift(2, "mod1"),
             Localised_mass_shift(5, "mod1"),  # R in the sequence
