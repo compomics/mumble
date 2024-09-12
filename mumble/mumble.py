@@ -568,7 +568,7 @@ class _ModificationHandler:
         return set(loc_list)
 
     def localize_mass_shift(self, psm) -> list[namedtuple]:
-        """Give potential localisations of a mass shift in a peptide
+        """Give potential localizations of a mass shift in a peptide
 
         Args:
             psm (psm_utils.PSM): PSM object
@@ -583,49 +583,80 @@ class _ModificationHandler:
 
         # get all potential modifications
         try:
-            potential_modifications_indices = self._binary_range_search(self.monoisotopic_masses,mass_shift,self.mass_error)
+            potential_modifications_indices = self._binary_range_search(self.monoisotopic_masses, mass_shift, self.mass_error)
             if potential_modifications_indices:
-                potential_modifications_tuples = self.modifications_names[potential_modifications_indices[0]:potential_modifications_indices[1]+1]
+                potential_modifications_tuples = self.modifications_names[
+                    potential_modifications_indices[0]:potential_modifications_indices[1] + 1]
             else:
                 return []
-                
+
         except KeyError:
             return None
+
         Localised_mass_shift = namedtuple("Localised_mass_shift", ["loc", "modification"])
-        Modification_candidate = namedtuple("Modification_candidate",["Localised_mass_shifts"]) 
+        Modification_candidate = namedtuple("Modification_candidate", ["Localised_mass_shifts"])
 
         feasible_modifications_candidates = []
-        
-        # memo_cache = set()
-        # check combinations of potential modifications
-        for potential_mods_combination in potential_modifications_tuples:
-            # Convert tuple to a hashable type for memoization
-            # tuple_key = tuple(potential_mods_tuple)
-            # if tuple_key in memo_cache:
-            #     if not memo_cache[tuple_key]:
-            #         continue  # Skip this tuple if it has already been found infeasible
+
+        # Memoization cache for storing feasible subcombinations
+        memo_cache = {}
+
+        def check_subcombinations(combination):
+            """Check if all subcombinations of the given combination are feasible."""
+            subcombination_feasible = True
+            subcombinations_data = []
             
-            localized_modification_positions = []
-            feasible = True
-
-            # Collect all possible localization positions for each modification
-            for mod_name in potential_mods_combination:
-                residues = self.name_to_mass_residue_dict[mod_name].residues # returns duplicate positions (any/protein C-term or any/protein N-term)
-                restrictions = self.name_to_mass_residue_dict[mod_name].restrictions # returns duplicate positions (any/protein C-term or any/protein N-term)
-
-                localized_mods = self.get_localisation(psm, mod_name, residues, restrictions) # returns set so there is no duplicate locations
-
-                if localized_mods:
-                    # Collect positions for the current modification
-                    localized_modification_positions.append(localized_mods)
+            for subcombination in itertools.combinations(combination, len(combination) - 1):
+                sorted_subcomb = tuple(sorted(subcombination))
+                if sorted_subcomb in memo_cache:
+                    # Get previously computed localization data for the subcombination
+                    subcombinations_data.append(memo_cache[sorted_subcomb])
                 else:
-                    feasible = False
+                    subcombination_feasible = False
                     break
-
-            # If any modification in the tuple is not feasible, skip this tuple
-            if not feasible:
-                continue
             
+            return subcombination_feasible, subcombinations_data
+
+        for potential_mods_combination in potential_modifications_tuples:
+            sorted_combination = tuple(sorted(potential_mods_combination))
+            
+            # Skip combinations larger than the max length and don't store them in memo
+            if len(sorted_combination) > self.max_combination_length:
+                continue
+
+            # If combination is already stored in memo, use that
+            if sorted_combination in memo_cache:
+                feasible = memo_cache[sorted_combination]["feasible"]
+                if not feasible:
+                    continue  # Skip if already known to be infeasible
+            else:
+                # Check subcombinations to see if they are feasible
+                subcombination_feasible, subcombinations_data = check_subcombinations(sorted_combination)
+                if not subcombination_feasible:
+                    continue  # Skip if any subcombination is infeasible
+
+                # Compute localization for the current combination
+                localized_modification_positions = []
+                feasible = True
+
+                for mod_name in potential_mods_combination:
+                    residues = self.name_to_mass_residue_dict[mod_name].residues
+                    restrictions = self.name_to_mass_residue_dict[mod_name].restrictions
+                    localized_mods = self.get_localisation(psm, mod_name, residues, restrictions)
+
+                    if localized_mods:
+                        localized_modification_positions.append(localized_mods)
+                    else:
+                        feasible = False
+                        break
+
+                # Store the current combination in memo if it's feasible
+                if feasible and len(sorted_combination) <= self.max_combination_length:
+                    memo_cache[sorted_combination] = {
+                        "feasible": True,
+                        "positions": localized_modification_positions
+                    }
+
             # Generate all possible position combinations for the modifications
             possible_combinations = list(itertools.product(*localized_modification_positions))
 
@@ -634,14 +665,15 @@ class _ModificationHandler:
             for combination in possible_combinations:
                 positions = [mod.loc for mod in combination]
                 if len(set(positions)) == len(positions):  # No overlap in positions
-                    # Create a list of Localised_mass_shift namedtuples for this valid combination
                     valid_localized_mods = [Localised_mass_shift(loc=mod.loc, modification=mod.modification) for mod in combination]
-                    # Store the combination in the Potential_modification_candidate
                     feasible_modifications_candidates.append(Modification_candidate(Localised_mass_shifts=valid_localized_mods))
 
-            # If there are valid combinations, store them
-            if valid_combinations:
-                feasible_modifications_candidates.append(valid_combinations)
+            # If the combination is feasible and less than max combination length, store it in memo
+            if len(sorted_combination) < self.max_combination_length:
+                memo_cache[sorted_combination] = {
+                    "feasible": feasible,
+                    "positions": localized_modification_positions
+                }
 
         return feasible_modifications_candidates if feasible_modifications_candidates else None
 
