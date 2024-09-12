@@ -430,6 +430,7 @@ class _ModificationHandler:
         )
         
         self.monoisotopic_masses, self.modifications_names = self._generate_modifications_combinations_lists(self.combination_length)
+        
 
 
     def _generate_modifications_combinations_lists(self,combination_length=1):
@@ -504,7 +505,7 @@ class _ModificationHandler:
 
     def get_localisation(
         self, psm, modification_name, residue_list, restrictions
-    ) -> list[namedtuple]:
+    ) -> set[namedtuple]:
         """
         Localise a given modification in a peptide
 
@@ -563,7 +564,8 @@ class _ModificationHandler:
                     ]
                 )
 
-        return loc_list
+        # remove duplicate locations
+        return set(loc_list)
 
     def localize_mass_shift(self, psm) -> list[namedtuple]:
         """Give potential localisations of a mass shift in a peptide
@@ -608,10 +610,10 @@ class _ModificationHandler:
 
             # Collect all possible localization positions for each modification
             for mod_name in potential_mods_combination:
-                residues = self.name_to_mass_residue_dict[mod_name].residues
-                restrictions = self.name_to_mass_residue_dict[mod_name].restrictions
+                residues = self.name_to_mass_residue_dict[mod_name].residues # returns duplicate positions (any/protein C-term or any/protein N-term)
+                restrictions = self.name_to_mass_residue_dict[mod_name].restrictions # returns duplicate positions (any/protein C-term or any/protein N-term)
 
-                localized_mods = self.get_localisation(psm, mod_name, residues, restrictions)
+                localized_mods = self.get_localisation(psm, mod_name, residues, restrictions) # returns set so there is no duplicate locations
 
                 if localized_mods:
                     # Collect positions for the current modification
@@ -623,7 +625,7 @@ class _ModificationHandler:
             # If any modification in the tuple is not feasible, skip this tuple
             if not feasible:
                 continue
-
+            
             # Generate all possible position combinations for the modifications
             possible_combinations = list(itertools.product(*localized_modification_positions))
 
