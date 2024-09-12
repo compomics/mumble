@@ -4,7 +4,9 @@ import pandas as pd
 from io import StringIO
 from collections import namedtuple
 from psm_utils import PSMList, PSM, Peptidoform
+from psm_utils.utils import mz_to_mass
 from pyteomics import proforma
+from pyteomics.mass import calculate_mass
 from pyteomics.fasta import IndexedFASTA
 
 from mumble.mumble import _ModificationHandler, PSMHandler
@@ -677,7 +679,40 @@ class TestModificationHandler:
         # Assertions
         assert masses == []
         assert combinations == []
+        
+    def test_double_combined_modifcations(self):
+        
+        mod_handler = _ModificationHandler(combination_length=2)
+        
+        psm = PSM(
+            peptidoform="VTFTETPENGSKW/2",
+            spectrum_id="some_spectrum",
+            is_decoy=False,
+            protein_list=["some_protein"],
+            precursor_mz="748.8581250320699"
+        )
+        
+        localized_modifications = mod_handler.localize_mass_shift(psm)
+        name_to_mass_dict = mod_handler.name_to_mass_residue_dict
+        
+        expmass = mz_to_mass(psm.precursor_mz, psm.get_precursor_charge())
+        calcmass = calculate_mass(psm.peptidoform.composition)
+        mass_shift = expmass - calcmass
+        
+        for candidate in localized_modifications:
+                        
+            mass_shift1 = candidate.Localised_mass_shifts[0]
+            
+            # no need to check single mod 'combinations'
+            try:
+                mass_shift2 = candidate.Localised_mass_shifts[1]
+            except:
+                continue
+            
+            sum = name_to_mass_dict[mass_shift1.modification].mass + name_to_mass_dict[mass_shift2.modification].mass
 
+            assert mass_shift1.loc != mass_shift2.loc
+            assert sum >= (mass_shift - 0.02) and sum <= (mass_shift + 0.02)
 
 if __name__ == "__main__":
     pytest.main()
