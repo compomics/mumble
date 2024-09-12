@@ -32,6 +32,18 @@ class TestPSMHandler:
         psm_handler.modification_handler = mod_handler
 
         return psm_handler, mod_handler, psm
+    
+    @pytest.fixture
+    def setup_psm(self):
+        psm = PSM(
+            peptidoform="VTFTETPENGSKW/2",
+            spectrum_id="some_spectrum",
+            is_decoy=False,
+            protein_list=["some_protein"],
+            precursor_mz="748.8581250320699"
+        )
+
+        return psm
 
     def test_find_mod_locations(self, setup_psmhandler):
         psm_handler, _, _ = setup_psmhandler
@@ -170,6 +182,55 @@ class TestPSMHandler:
             peptidoforms = psm_handler.parse_csv_file("dummy_file.tsv", delimiter="\t")
 
         assert peptidoforms == []  # Should return an empty list due to empty file
+        
+    def test_tool_combination_length_1(self, setup_psm):
+        
+        psm_handler = PSMHandler(combination_length=1)
+        psm = setup_psm
+        
+        result_psm_list = psm_handler.get_modified_peptidoforms_list(psm)        
+        
+        # order of PSMs/peptidoforms doesn't matter
+        expected_Peptidoforms = frozenset([Peptidoform('VTFTETPEDGSKW/2'),Peptidoform('VTFTETPEN[Deamidated]GSKW/2')])
+        result_Peptidoforms = frozenset(psm.peptidoform for psm in result_psm_list)
+         
+        # original psm should not be returned by default
+        assert psm not in result_psm_list
+        
+        assert result_Peptidoforms == expected_Peptidoforms
+
+    def test_tool_combination_length_2(self, setup_psm):
+        
+        psm_handler = PSMHandler(combination_length=2)
+        
+        psm = setup_psm
+        result_psm_list = psm_handler.get_modified_peptidoforms_list(psm)
+        result_peptidoforms = [result_psm.peptidoform for result_psm in result_psm_list]
+        
+        # all expected peptidoforms with 1 mod
+        expected_single_mod_Peptidoforms = [Peptidoform('VTFTETPEDGSKW/2'),Peptidoform('VTFTETPEN[Deamidated]GSKW/2')]
+
+        # some of the expected peptidoforms with 2 mods
+        expected_double_mod_Peptidoforms = [Peptidoform('VTFTETPESGSRW/2'),Peptidoform('VTFTETPE[Oxidation]NGSIW/2'), Peptidoform('VTFTNTPENGSK[Oxidation]W/2'), Peptidoform('VTFTETP[Pro->HAVA]EPGSKW/2'), Peptidoform('VTFT[Oxidation]ETPEVGSKW/2'), Peptidoform('VT[Methyl]FTETPETGSKW/2')]
+        
+        # check every peptidoform is unique, PSM non hashable so set(result_psm_list) results in error
+        assert len(result_peptidoforms) == len(set(result_peptidoforms))
+        
+        assert len(result_psm_list) == 189
+
+        assert all(peptidoform in result_peptidoforms for peptidoform in expected_single_mod_Peptidoforms)
+        assert all(peptidoform in result_peptidoforms for peptidoform in expected_double_mod_Peptidoforms)
+        
+    def test_tool_keep_original(self, setup_psm):
+        # psm_handler = setup_psmhandler[0]
+        psm_handler = PSMHandler(combination_length=1)
+        
+        psm = setup_psm
+        
+        result_psm_list = psm_handler.get_modified_peptidoforms_list(psm, keep_original=True)          
+        
+        assert psm in result_psm_list
+        assert len(result_psm_list) == 3
 
 
 class TestModificationHandler:
