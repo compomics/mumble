@@ -290,17 +290,17 @@ class TestModificationHandler:
         restrictions = ["anywhere", "N-term", "C-term", "N-term", "anywhere"]
 
         # Mock the check_protein_level method
-        mod_handler.check_protein_level = MagicMock(return_value=[("prepeptide", "mod1")])
+        mod_handler.check_protein_level = MagicMock(return_value=[("pepeptide", "mod1")])
 
         # Expected output
-        expected_output = [
+        expected_output = {
             Localised_mass_shift(2, "mod1"),
             Localised_mass_shift(5, "mod1"),  # R in the sequence
             Localised_mass_shift("N-term", "mod1"),  # N-term modification
             Localised_mass_shift("C-term", "mod1"),  # C-term modification
             Localised_mass_shift("N-term", "mod1"),  # Q in the sequence
-            Localised_mass_shift("prepeptide", "mod1"),  # protein level modification
-        ]
+            Localised_mass_shift("pepeptide", "mod1"),  # protein level modification
+        }
 
         # Call the method
         result = mod_handler.get_localisation(psm, modification_name, residue_list, restrictions)
@@ -319,7 +319,7 @@ class TestModificationHandler:
         restrictions = ["N-term"]
 
         # Expected output
-        expected_output = []
+        expected_output = set()
 
         # Call the method
         result = mod_handler.get_localisation(psm, modification_name, residue_list, restrictions)
