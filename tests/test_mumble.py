@@ -463,9 +463,7 @@ class TestModificationHandler:
             # These should be in order with the combinations sorted on weights so if the list modifications changes this will probably need to be updated too
             mod_handler.get_localisation = MagicMock(side_effect=[
                 [Localised_mass_shift(loc=1, modification="mod2"), Localised_mass_shift(loc="N-term", modification="mod2")],  # Carbamyl localised at position 1 or N-terminal
-                [Localised_mass_shift(loc=1, modification="mod2"), Localised_mass_shift(loc="N-term", modification="mod2")], 
                 [Localised_mass_shift(loc=1, modification="mod5")],
-                [Localised_mass_shift(loc=1, modification="mod2"), Localised_mass_shift(loc="N-term", modification="mod2")], 
                 [Localised_mass_shift(loc="N-term", modification="mod3"), Localised_mass_shift(loc=1, modification="mod3")],  # Acetyl at N-terminal or 1
                 # These won't be called since they are far from the target
                 [Localised_mass_shift(loc=3, modification="mod1")],
@@ -518,8 +516,7 @@ class TestModificationHandler:
                 assert match_found, f"Expected localisation {expected} not found in localized_modifications."
 
             # Ensure far masses are not tested (Oxidation and Phospho should be skipped)
-            assert mod_handler.get_localisation.call_count == 5  # Only close ones should be called
-            
+            assert mod_handler.get_localisation.call_count == 3  # Should only be called 3 times because of cache
             
     def test_check_protein_level(self, setup_modhandler):
         mod_handler, psm = setup_modhandler
