@@ -574,23 +574,26 @@ class TestModificationHandler:
 
         # Expected results
         expected_masses = [
-            10.0,
-            10.0 + 10.0,
-            20.0,
-            10.0 + 20.0,
-            20.0 + 20.0,
-            40.0,
-            10.0 + 40.0,
-            20.0 + 40.0,
-            40.0 + 40.0,
+            10.0, # mod1 (10)
+            10.0 + 10.0, # mod1 + mod1 (20)
+            20.0, # mod3 (20)
+            10.0 + 20.0, # mod1 + mod3 (30)
+            40.0, # mod2 (40)
+            20.0 + 20.0, # mod3 + mod3 (40)
+            10.0 + 40.0, # mod1 + mod2 (50)
+            20.0 + 40.0, # mod3 + mod2 (60)
+            40.0 + 40.0, # mod2 + mod2 (80)
         ]
         expected_combinations = [
-            ("mod1",),
-            ("mod3",),
-            ("mod1","mod3"),
-            ("mod2",),
-            ("mod1", "mod2"),
-            ("mod3", "mod2"),
+            ("mod1",),              # 10
+            ("mod1","mod1"),        # 20
+            ("mod3",),              # 20
+            ("mod1","mod3"),        # 30
+            ("mod2",),              # 40
+            ("mod3","mod3"),        # 40
+            ("mod1", "mod2"),       # 50
+            ("mod3", "mod2"),       # 60
+            ("mod2","mod2"),        # 80
         ]
 
         # Assertions for masses
