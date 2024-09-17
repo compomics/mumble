@@ -436,58 +436,54 @@ class _ModificationHandler:
     def _generate_modifications_combinations_lists(self, combination_length=1):
         """
         Generates all possible combinations of modifications and calculates their summed monoisotopic masses.
-
-        This method creates combinations of modifications up to the specified combination length and calculates
+        This method creates unique combinations of modifications up to the specified combination length and calculates
         the total monoisotopic mass for each combination. The results are returned as two lists: one containing
         the summed monoisotopic masses and the other containing the corresponding modification combinations.
         The results are sorted by the summed monoisotopic masses in ascending order.
 
         Args:
-            combination_length (int, optional): Maximum number of modifications per combination. All lower numbers will be included as well. Defaults to 1.
+        combination_length (int, optional): Maximum number of modifications per combination. All lower numbers will be included as well. Defaults to 1.
 
         Returns:
-            tuple: A tuple containing two elements:
-                - List[float]: A list of summed monoisotopic masses, sorted in ascending order.
-                - List[tuple]: A list of tuples, where each tuple contains a combination of modification names
-                            corresponding to the summed monoisotopic masses.
+        tuple: A tuple containing two elements:
+            - List[float]: A list of summed monoisotopic masses, sorted in ascending order.
+            - List[tuple]: A list of tuples, where each tuple contains a combination of modification names
+                        corresponding to the summed monoisotopic masses.
         """
-
         # Remove duplicates from the modification DataFrame
         modification_filtered_df = self.modification_df[['name', 'monoisotopic_mass']].drop_duplicates()
+        mass_dict = dict(zip(modification_filtered_df['name'], modification_filtered_df['monoisotopic_mass']))
+        
+        # Function to generate combinations
+        def generate_combinations(items, length):
+            if length == 0:
+                yield ()
+            elif length > 0:
+                for i in range(len(items)):
+                    for cc in generate_combinations(items[i:], length-1):
+                        yield (items[i],) + cc
 
-        # Initial setup: combinations with just one modification
-        modifications = [(item,) for item in modification_filtered_df['name']]
-        monoisotopic_masses = modification_filtered_df['monoisotopic_mass'].to_list()
+        # Generate all unique combinations
+        all_modifications = []
+        all_masses = []
+        unique_combinations = set()
 
-        # Iteratively build combinations for length > 1
-        for r in range(2, combination_length + 1):
-            new_modifications = []
-            new_monoisotopic_masses = []
+        for r in range(1, combination_length + 1):
+            for combo in generate_combinations(sorted(modification_filtered_df['name']), r):
+                if combo not in unique_combinations:
+                    unique_combinations.add(combo)
+                    all_modifications.append(combo)
+                    all_masses.append(sum(mass_dict[mod] for mod in combo))
 
-            # Iterate through the previous set of modifications and add new modifications
-            for i in range(len(modifications)):
-                for j in range(len(modification_filtered_df)):
-                    new_comb = modifications[i] + (modification_filtered_df.iloc[j]['name'],)
-                    # Ensure the combination is sorted for consistency and to avoid duplicates
-                    sorted_comb = tuple(sorted(new_comb))
-
-                    # Only add if it's unique (no repeated combinations)
-                    if sorted_comb not in new_modifications:
-                        new_modifications.append(sorted_comb)
-                        new_monoisotopic_masses.append(monoisotopic_masses[i] + modification_filtered_df.iloc[j]['monoisotopic_mass'])
-
-            # Update the modifications and masses lists with the new combinations
-            modifications.extend(new_modifications)
-            monoisotopic_masses.extend(new_monoisotopic_masses)
-
-        # Combine masses and modifications into tuples, sort by monoisotopic mass, then unzip back into two lists
-        combined = sorted(zip(monoisotopic_masses, modifications))
-
+        # Sort the results by mass
+        combined = sorted(zip(all_masses, all_modifications))
+        
         if combined:
             monoisotopic_masses, modifications = zip(*combined)
             return list(monoisotopic_masses), list(modifications)
         else:
             return [], []
+
 
     def _get_name_to_mass_residue_dict(self):
         """
