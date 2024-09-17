@@ -1,3 +1,6 @@
+import os
+import pickle
+from unittest import mock
 import pytest
 from unittest.mock import MagicMock, patch, mock_open
 import pandas as pd
@@ -17,8 +20,6 @@ Modification_candidate = namedtuple("Modification_candidate", ["Localised_mass_s
 
 class TestPSMHandler:
     
-
-
     @pytest.fixture
     def setup_psmhandler(self):
         # Fixture for setting up PSMHandler with mocked dependencies
@@ -249,6 +250,33 @@ class TestModificationHandler:
         )
         mod_handler = _ModificationHandler(mass_error=0.02)
         return mod_handler, psm
+    
+    @pytest.fixture
+    def setup_modhandler_with_data(self):
+        # Setup a _ModificationHandler instance with a sample modification DataFrame
+        mod_handler = _ModificationHandler(mass_error=0.02)
+        data = {
+            "name": ["mod1", "mod2", "mod3"],
+            "monoisotopic_mass": [10.0, 40.0, 20.0],
+        }
+        mod_handler.modification_df = pd.DataFrame(data)
+        return mod_handler
+
+    @pytest.fixture
+    def get_cache_paths(self):
+        cache_dir = "modification_cache"
+        cache_file_path = os.path.join(cache_dir, "length_1_exclude_mutations_False.pkl") # just for testing
+        return cache_dir, cache_file_path
+
+    def cleanup_cache_file(self, cache_file_path):
+        """
+        Helper function to clean up the cache file after the test runs.
+        Ensures that no leftover cache file or directory exists after tests.
+        """
+        # Remove the cache file if it exists
+        if os.path.exists(cache_file_path):
+            # print(f'removing: {cache_file_path}')
+            os.remove(cache_file_path)
 
     def test_get_unimod_database(self, setup_modhandler):
         mod_handler, _ = setup_modhandler
@@ -256,6 +284,73 @@ class TestModificationHandler:
 
         assert mod_handler.modification_df is not None
 
+    def test_cache_creation_if_not_exists(self, get_cache_paths):
+        """
+        Test if the cache is created properly when it doesn't exist.
+        """
+        cache_file_path = get_cache_paths[1]
+
+        # Ensure there's no cache file before starting
+        if os.path.exists(cache_file_path):
+            os.remove(cache_file_path)
+
+        # Initialize the _ModificationHandler without an existing cache
+        handler = _ModificationHandler(
+            mass_error=0.02,
+            add_aa_combinations=0,
+            fasta_file=None,
+            combination_length=1,
+            exclude_mutations=False
+        )
+        
+        # Check if the cache file was created
+        assert os.path.exists(cache_file_path), "Cache file was not created."
+        
+        # clean the cache file
+        self.cleanup_cache_file(cache_file_path)
+
+    def test_cache_loading_if_exists(self, get_cache_paths):
+        """
+        Test if the system loads the cache properly if the cache file exists.
+        """
+        cache_dir, cache_file_path = get_cache_paths
+
+        # Ensure the cache directory exists
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        modification_df = pd.DataFrame({
+            'name': ['Oxidation', 'Phosphorylation', 'Acetylation'],
+            'monoisotopic_mass': [15.9949, 79.9663, 42.0106],
+            'classification': ['Post-translational', 'Post-translational', 'Post-translational'],
+            'restriction': ['anywhere', 'S', 'N-term'],
+            'residue': ['M', 'S', 'N']
+        })
+        
+        # Create a fake cache file with some dummy data
+        fake_cache_data = {
+            'modification_df': modification_df,
+            'monoisotopic_masses': [123.45, 456.78],
+            'modifications_names': ["mod1", "mod2"]
+        }
+        
+        with open(cache_file_path, 'wb') as f:
+            pickle.dump(fake_cache_data, f)
+        
+        # Initialize the _ModificationHandler, which should use the cache
+        handler = _ModificationHandler(
+            mass_error=0.02,
+            add_aa_combinations=0,
+            fasta_file=None,
+            combination_length=1,
+            exclude_mutations=False
+        )
+
+        # Check that the data loaded from the cache is as expected
+        pd.testing.assert_frame_equal(handler.modification_df, modification_df)
+        assert handler.monoisotopic_masses == [123.45, 456.78], "Monoisotopic masses not loaded from cache."
+        assert handler.modifications_names == ["mod1", "mod2"], "Modification names not loaded from cache." 
+        self.cleanup_cache_file(cache_file_path)
+  
     def test_add_amino_acid_combinations(self, setup_modhandler):
         mod_handler, _ = setup_modhandler
 
@@ -337,7 +432,6 @@ class TestModificationHandler:
         actual_set = {frozenset({"loc": loc.loc, "modification": loc.modification}.items()) for loc in actual.Localised_mass_shifts}
 
         return expected_set == actual_set
-
 
     # TODO: refactor after changes in localize_mass_shift
     def test_localize_mass_shift_combination_length_1(self, setup_modhandler):
@@ -531,18 +625,6 @@ class TestModificationHandler:
         additional_aa = "Q"
         results = mod_handler.check_protein_level(psm, additional_aa)
         assert ("postpeptide", "Q") in results
-
-
-    @pytest.fixture
-    def setup_modhandler_with_data(self):
-        # Setup a _ModificationHandler instance with a sample modification DataFrame
-        mod_handler = _ModificationHandler(mass_error=0.02)
-        data = {
-            "name": ["mod1", "mod2", "mod3"],
-            "monoisotopic_mass": [10.0, 40.0, 20.0],
-        }
-        mod_handler.modification_df = pd.DataFrame(data)
-        return mod_handler
     
     def test_generate_modifications_combinations_lists_length_1(self, setup_modhandler_with_data):
         mod_handler = setup_modhandler_with_data
@@ -666,7 +748,6 @@ class TestModificationHandler:
 
         # Assertions for combinations (ignoring order within tuples and order of tuples in the list)
         assert combinations_set == expected_combinations_set
-
 
     def test_generate_modifications_combinations_lists_empty(self, setup_modhandler_with_data):
         mod_handler = setup_modhandler_with_data
