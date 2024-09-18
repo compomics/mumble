@@ -17,42 +17,71 @@ class SpectrumFileHandler:
 
         if spectrum_file.endswith(".mgf"):
             self.file_type = "MGF"
-            self.spectra = mgf.IndexedMGF(spectrum_file)
+            self._parse_mgf()
         elif spectrum_file.endswith(".mzml"):
             self.file_type = "MZML"
             self.spectra = mzml.IndexedMzML(spectrum_file)
+            self._parse_mzml()
         else:
             raise ValueError("Unsupported file format. Only MGF and mzML are supported.")
+
     
+    def _parse_mgf(self):
+            """Parse an MGF file and store each spectrum as a RawSpectrum."""
+            try:
+                with mgf.MGF(self.spectrum_file) as spectra:
+                    for spectrum in spectra:
+                        spectrum_id = spectrum['params']['title']
+                        precursor_mz = spectrum['params'].get('pepmass', [None])[0]
+                        
+                        self.spectra[spectrum_id] = rusty_spectrum.Spectrum(
+                            mz_values=spectrum['m/z array'],
+                            intensities=spectrum['intensity array'],
+                            precursor_mz=precursor_mz
+                        )
+                logging.info(f"Parsed {len(self.spectra)} spectra from {self.spectrum_file}")
+            except Exception as e:
+                logging.error(f"Error parsing MGF file {self.spectrum_file}: {e}")
+
+    def _parse_mzml(self):
+        """Parse an mzML file and store each spectrum as a RawSpectrum."""
+        try:
+            with mzml.MzML(self.spectrum_file) as spectra:
+                for spectrum in spectra:
+                    spectrum_id = spectrum.get('id', None)
+                    precursor_mz = None
+                    if 'precursorList' in spectrum and spectrum['precursorList']:
+                        precursor_mz = spectrum['precursorList']['precursor'][0]['selectedIonList']['selectedIon'][0]['selected ion m/z']
+
+                    self.spectra[spectrum_id] = rusty_spectrum.Spectrum(
+                        mz_values=spectrum['m/z array'],
+                        intensities=spectrum['intensity array'],
+                        precursor_mz=precursor_mz
+                    )
+            logging.info(f"Parsed {len(self.spectra)} spectra from {self.spectrum_file}")
+        except Exception as e:
+            logging.error(f"Error parsing mzML file {self.spectrum_file}: {e}")
+
     def get_spectrum(self, spectrum_id: str):
         """
-        Retrieve the spectrum by its ID from the spectrum file.
+        Retrieve a RawSpectrum by its ID.
         
         Args:
             spectrum_id (str): The ID of the spectrum.
         
         Returns:
-            rusty_spectrum.Spectrum: Retrieved spectrum or None if not found.
+            rusty_spectrum.Spectrum: The retrieved spectrum or None if not found.
         """
-        try:
-            if self.file_type == "MGF":
-                spectrum = self.spectra[spectrum_id]
-            elif self.file_type == "MZML":
-                spectrum = self.spectra.get_by_id(spectrum_id)
-            else:
-                logging.error("No spectra file loaded.")
-                return None
-
-            return rusty_spectrum.Spectrum(
-                mz_values=spectrum["m/z array"], 
-                intensities=spectrum["intensity array"], 
-                precursor_mz=spectrum.get("precursorList", {}).get("precursor", [{}])[0]
-                               .get("selectedIonList", {}).get("selectedIon", [{}])[0]
-                               .get("selected ion m/z", None)
-            )
-        except KeyError:
-            logging.error(f"Spectrum ID {spectrum_id} not found in the file.")
-            return None
+        return self.spectra.get(spectrum_id, None)
+    
+    def get_all_spectra(self):
+        """
+        Retrieve all parsed spectra.
+        
+        Returns:
+            dict: Dictionary of all spectra keyed by spectrum_id.
+        """
+        return self.spectra
 
 
 class MetadataParser:
