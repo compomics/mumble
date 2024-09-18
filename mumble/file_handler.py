@@ -2,10 +2,10 @@ import logging
 import pandas as pd
 from psm_utils import PSM
 from pyteomics import mgf, mzml
-from rustyms import spectrum as rusty_spectrum
+from rustyms import RawSpectrum
 
 
-class SpectrumFileHandler:
+class _SpectrumFileHandler:
     """
     Class to handle spectrum files (MGF or mzML) and retrieve spectra by spectrum ID.
     """
@@ -34,7 +34,7 @@ class SpectrumFileHandler:
                         spectrum_id = spectrum['params']['title']
                         precursor_mz = spectrum['params'].get('pepmass', [None])[0]
                         
-                        self.spectra[spectrum_id] = rusty_spectrum.Spectrum(
+                        self.spectra[spectrum_id] = RawSpectrum.Spectrum(
                             mz_values=spectrum['m/z array'],
                             intensities=spectrum['intensity array'],
                             precursor_mz=precursor_mz
@@ -53,7 +53,7 @@ class SpectrumFileHandler:
                     if 'precursorList' in spectrum and spectrum['precursorList']:
                         precursor_mz = spectrum['precursorList']['precursor'][0]['selectedIonList']['selectedIon'][0]['selected ion m/z']
 
-                    self.spectra[spectrum_id] = rusty_spectrum.Spectrum(
+                    self.spectra[spectrum_id] = RawSpectrum.Spectrum(
                         mz_values=spectrum['m/z array'],
                         intensities=spectrum['intensity array'],
                         precursor_mz=precursor_mz
@@ -84,13 +84,13 @@ class SpectrumFileHandler:
         return self.spectra
 
 
-class MetadataParser:
+class _MetadataParser:
     """
     Class to parse metadata files (CSV/TSV) containing PSM information.
     """
     
     @staticmethod
-    def parse_psm_file(file_name: str, delimiter: str = "\t") -> list:
+    def parse_csv_file(file_name: str, delimiter: str = "\t") -> list:
         """
         Parse a CSV or TSV file containing peptidoform, spectrum_id, and precursor_mz.
         
