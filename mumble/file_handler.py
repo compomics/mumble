@@ -32,15 +32,28 @@ class _SpectrumFileHandler:
         try:
             with mgf.MGF(self.spectrum_file) as spectra:
                 for spectrum in spectra:
-                    spectrum_id = spectrum['params']['title']  # Extract spectrum ID from the MGF params
+                    spectrum_id = spectrum['params'].get('title', 'Unknown')  # Extract spectrum ID from the MGF params
                     precursor_mass = spectrum['params'].get('pepmass', [None])[0]  # Extract precursor mass
+                    
+                    # Extract retention time
+                    rt = 0.0
+                    if 'rtinseconds' in spectrum['params']:
+                        rt = float(spectrum['params']['rtinseconds'])
+                    elif 'retention time' in spectrum['params']:
+                        rt = float(spectrum['params']['retention time'])
+
+                    # Extract precursor charge
+                    precursor_charge = 0
+                    if 'charge' in spectrum['params']:
+                        charge_str = spectrum['params']['charge']
+                        precursor_charge = int(charge_str.strip('+'))  # Remove '+' and convert to int
 
                     # Create a RawSpectrum object using required fields and additional attributes
                     self.spectra[spectrum_id] = RawSpectrum(
                         title=spectrum_id, 
                         num_scans=len(spectrum['m/z array']),
-                        rt=0.0,  # TODO: get value
-                        precursor_charge=0.0,  # TODO: get value
+                        rt=rt,
+                        precursor_charge=precursor_charge,
                         mz_array=np.array(spectrum['m/z array']),
                         intensity_array=np.array(spectrum['intensity array']),
                         precursor_mass=precursor_mass 
@@ -55,26 +68,39 @@ class _SpectrumFileHandler:
             with mzml.MzML(self.spectrum_file) as spectra:
                 for spectrum in spectra:
                     spectrum_id = spectrum.get('id', None)  # Get the spectrum ID from the mzML spectrum
-                    precursor_mass = 0.0 # TODO: get value
-                    
-                    # Extract precursor mass value if available
+                    precursor_mass = 0.0
+                    precursor_charge = 0
+                    rt = 0.0
+
+                    # Extract precursor mass and charge if available
                     if 'precursorList' in spectrum and spectrum['precursorList']:
-                        precursor_mass = spectrum['precursorList']['precursor'][0]['selectedIonList']['selectedIon'][0]['selected ion m/z']
+                        precursor = spectrum['precursorList']['precursor'][0]
+                        if 'selectedIonList' in precursor:
+                            selected_ion = precursor['selectedIonList']['selectedIon'][0]
+                            precursor_mass = selected_ion.get('selected ion m/z', 0.0)
+                            precursor_charge = int(selected_ion.get('charge state', 0))
+
+                    # Extract retention time
+                    if 'scanList' in spectrum and spectrum['scanList']:
+                        scan = spectrum['scanList']['scan'][0]
+                        for cv_param in scan.get('cvParam', []):
+                            if cv_param.get('accession') == 'MS:1000016':  # accession for scan start time
+                                rt = float(cv_param.get('value', 0.0))
+                                break
 
                     # Create a RawSpectrum object using required fields and additional attributes
                     self.spectra[spectrum_id] = RawSpectrum(
                         title=spectrum_id,
-                        num_scans=len(spectrum['m/z array']),  
-                        rt=0.0,  # TODO: get value
-                        precursor_charge=0.0,  # TODO: get value
+                        num_scans=len(spectrum['m/z array']),
+                        rt=rt,
+                        precursor_charge=precursor_charge,
                         mz_array=np.array(spectrum['m/z array']),
                         intensity_array=np.array(spectrum['intensity array']),
-                        precursor_mass=precursor_mass  
+                        precursor_mass=precursor_mass
                     )
             logging.info(f"Parsed {len(self.spectra)} spectra from {self.spectrum_file}")
         except Exception as e:
             logging.error(f"Error parsing mzML file {self.spectrum_file}: {e}")
-        x=10
 
     def get_spectrum(self, spectrum_id: str):
         """

@@ -53,18 +53,40 @@ class TestSpectrumFileHandler:
             {
                 "m/z array": [100.0, 200.0, 300.0],
                 "intensity array": [10.0, 20.0, 30.0],
-                "params": {"title": "spec1", "pepmass": [500.5]}
+                "params": {
+                    "title": "spec1",
+                    "pepmass": [500.5],
+                    "charge": "2+",
+                    "rtinseconds": "10.5"
+                }
             },
             {
                 "m/z array": [110.0, 220.0],
                 "intensity array": [15.0, 25.0],
-                "params": {"title": "spec2", "pepmass": [600.6]}
+                "params": {
+                    "title": "spec2",
+                    "pepmass": [600.6],
+                    "charge": "3+",
+                    "retention time": "15.7"
+                }
+            },
+            {
+                "m/z array": [120.0, 240.0, 360.0],
+                "intensity array": [12.0, 24.0, 36.0],
+                "params": {
+                    "title": "spec3",
+                    "pepmass": [700.7]
+                    # Missing charge and retention time to test default behavior
+                }
             }
         ]
         
-        expected_spectra = [[(100,10),(200,20),(300,30)],
-                            [(110,15),(220,25)]]   
-        
+        expected_spectra = [
+            [(100, 10), (200, 20), (300, 30)],
+            [(110, 15), (220, 25)],
+            [(120, 12), (240, 24), (360, 36)]
+        ]
+
         # Create a mock MGF object
         mock_mgf = MagicMock()
         mock_mgf.__enter__.return_value = iter(mock_mgf_data)
@@ -73,22 +95,37 @@ class TestSpectrumFileHandler:
         with patch("pyteomics.mgf.MGF", return_value=mock_mgf):
             handler = _SpectrumFileHandler("test.mgf")
 
-            assert len(handler.spectra) == 2
-            assert isinstance(handler.spectra["spec1"], RawSpectrum)
-            assert isinstance(handler.spectra["spec2"], RawSpectrum)
+            # Check the number of spectra
+            assert len(handler.spectra) == 3, f"Expected 3 spectra, got {len(handler.spectra)}"
 
+            # Check if all spectra are instances of RawSpectrum
+            for spec_id in ["spec1", "spec2", "spec3"]:
+                assert isinstance(handler.spectra[spec_id], RawSpectrum), f"{spec_id} is not an instance of RawSpectrum"
+
+            # Check specific values for each spectrum
             assert handler.spectra["spec1"].mass == 500.5
+            assert handler.spectra["spec1"].charge == 2
             assert handler.spectra["spec1"].num_scans == 3
-            
-            assert handler.spectra["spec2"].mass == 600.6
-            assert handler.spectra["spec2"].num_scans == 2
+            assert handler.spectra["spec1"].rt == 10.5
 
-            # check rawPeacks in spectrum/mz_array for each spectrum
-            for spectrumCounter, rawSpectrum in enumerate(handler.spectra.values()):            
-                for peakCounter, rawPeak in enumerate(rawSpectrum.spectrum):
-                    assert rawPeak.mz == expected_spectra[spectrumCounter][peakCounter][0], f"Mismatch at spectrum {spectrumCounter}, peak {peakCounter}: expected mz {expected_spectra[spectrumCounter][peakCounter][0]}, got {rawPeak.mz}"
-                    assert rawPeak.intensity == expected_spectra[spectrumCounter][peakCounter][1], f"Mismatch at spectrum {spectrumCounter}, peak {peakCounter}: expected intensity {expected_spectra[spectrumCounter][peakCounter][1]}, got {rawPeak.intensity}"
-    
+            assert handler.spectra["spec2"].mass == 600.6
+            assert handler.spectra["spec2"].charge == 3
+            assert handler.spectra["spec2"].num_scans == 2
+            assert handler.spectra["spec2"].rt == 15.7
+
+            assert handler.spectra["spec3"].mass == 700.7
+            assert handler.spectra["spec3"].charge == 0  # Default value when missing
+            assert handler.spectra["spec3"].num_scans == 3
+            assert handler.spectra["spec3"].rt == 0.0  # Default value when missing
+
+            # Check rawPeaks in spectrum/mz_array for each spectrum
+            for spectrum_id, expected_peaks in zip(["spec1", "spec2", "spec3"], expected_spectra):
+                raw_spectrum = handler.spectra[spectrum_id]
+                for peak_counter, (expected_mz, expected_intensity) in enumerate(expected_peaks):
+                    raw_peak = raw_spectrum.spectrum[peak_counter]
+                    assert raw_peak.mz == expected_mz, f"Mismatch in {spectrum_id}, peak {peak_counter}: expected mz {expected_mz}, got {raw_peak.mz}"
+                    assert raw_peak.intensity == expected_intensity, f"Mismatch in {spectrum_id}, peak {peak_counter}: expected intensity {expected_intensity}, got {raw_peak.intensity}"
+
     def test_parse_mzml(self):
         """Test parsing an mzML file and storing spectra."""
         mock_mzml_data = [
@@ -98,7 +135,19 @@ class TestSpectrumFileHandler:
                 "intensity array": [10.0, 20.0, 30.0],
                 "precursorList": {
                     "precursor": [{
-                        "selectedIonList": {"selectedIon": [{"selected ion m/z": 500.5}]}
+                        "selectedIonList": {
+                            "selectedIon": [{
+                                "selected ion m/z": 500.5,
+                                "charge state": 2
+                            }]
+                        }
+                    }]
+                },
+                "scanList": {
+                    "scan": [{
+                        "cvParam": [
+                            {"accession": "MS:1000016", "name": "scan start time", "value": "10.5"}
+                        ]
                     }]
                 }
             },
@@ -108,41 +157,88 @@ class TestSpectrumFileHandler:
                 "intensity array": [15.0, 25.0],
                 "precursorList": {
                     "precursor": [{
-                        "selectedIonList": {"selectedIon": [{"selected ion m/z": 600.6}]}
+                        "selectedIonList": {
+                            "selectedIon": [{
+                                "selected ion m/z": 600.6,
+                                "charge state": 3
+                            }]
+                        }
+                    }]
+                },
+                "scanList": {
+                    "scan": [{
+                        "cvParam": [
+                            {"accession": "MS:1000016", "name": "scan start time", "value": "15.7"}
+                        ]
+                    }]
+                }
+            },
+            {
+                "id": "spec3",
+                "m/z array": [120.0, 240.0, 360.0],
+                "intensity array": [12.0, 24.0, 36.0],
+                "precursorList": {
+                    "precursor": [{
+                        "selectedIonList": {
+                            "selectedIon": [{
+                                "selected ion m/z": 700.7
+                                # Missing charge state to test default behavior
+                            }]
+                        }
+                    }]
+                },
+                "scanList": {
+                    "scan": [{
+                        # Missing retention time to test default behavior
                     }]
                 }
             }
         ]
         
-        expected_spectra = [[(100,10),(200,20),(300,30)],
-                            [(110,15),(220,25)]]   
+        expected_spectra = [
+            [(100, 10), (200, 20), (300, 30)],
+            [(110, 15), (220, 25)],
+            [(120, 12), (240, 24), (360, 36)]
+        ]
 
         # Create a mock MzML object
         mock_mzml = MagicMock()
         mock_mzml.__enter__.return_value = iter(mock_mzml_data)
         mock_mzml.__exit__.return_value = False
-        
+
         with patch("pyteomics.mzml.MzML", return_value=mock_mzml):
             handler = _SpectrumFileHandler("test.mzml")
 
+            # Check the number of spectra
+            assert len(handler.spectra) == 3, f"Expected 3 spectra, got {len(handler.spectra)}"
 
-            assert len(handler.spectra) == 2
-            assert isinstance(handler.spectra["spec1"], RawSpectrum)
-            assert isinstance(handler.spectra["spec2"], RawSpectrum)
+            # Check if all spectra are instances of RawSpectrum
+            for spec_id in ["spec1", "spec2", "spec3"]:
+                assert isinstance(handler.spectra[spec_id], RawSpectrum), f"{spec_id} is not an instance of RawSpectrum"
 
+            # Check specific values for each spectrum
             assert handler.spectra["spec1"].mass == 500.5
             assert handler.spectra["spec1"].num_scans == 3
-            
-            
+            assert handler.spectra["spec1"].rt == 10.5
+            assert handler.spectra["spec1"].charge == 2
+
             assert handler.spectra["spec2"].mass == 600.6
             assert handler.spectra["spec2"].num_scans == 2
+            assert handler.spectra["spec2"].rt == 15.7
+            assert handler.spectra["spec2"].charge == 3
 
-            # check rawPeacks in spectrum/mz_array for each spectrum
-            for spectrumCounter, rawSpectrum in enumerate(handler.spectra.values()):            
-                for peakCounter, rawPeak in enumerate(rawSpectrum.spectrum):
-                    assert rawPeak.mz == expected_spectra[spectrumCounter][peakCounter][0], f"Mismatch at spectrum {spectrumCounter}, peak {peakCounter}: expected mz {expected_spectra[spectrumCounter][peakCounter][0]}, got {rawPeak.mz}"
-                    assert rawPeak.intensity == expected_spectra[spectrumCounter][peakCounter][1], f"Mismatch at spectrum {spectrumCounter}, peak {peakCounter}: expected intensity {expected_spectra[spectrumCounter][peakCounter][1]}, got {rawPeak.intensity}"
+            assert handler.spectra["spec3"].mass == 700.7
+            assert handler.spectra["spec3"].num_scans == 3
+            assert handler.spectra["spec3"].rt == 0.0  # Default value when missing
+            assert handler.spectra["spec3"].charge == 0  # Default value when missing
 
+            # Check rawPeaks in spectrum/mz_array for each spectrum
+            for spectrum_id, expected_peaks in zip(["spec1", "spec2", "spec3"], expected_spectra):
+                raw_spectrum = handler.spectra[spectrum_id]
+                for peak_counter, (expected_mz, expected_intensity) in enumerate(expected_peaks):
+                    raw_peak = raw_spectrum.spectrum[peak_counter]
+                    assert raw_peak.mz == expected_mz, f"Mismatch in {spectrum_id}, peak {peak_counter}: expected mz {expected_mz}, got {raw_peak.mz}"
+                    assert raw_peak.intensity == expected_intensity, f"Mismatch in {spectrum_id}, peak {peak_counter}: expected intensity {expected_intensity}, got {raw_peak.intensity}"
 
     def test_get_spectrum_found(self, setup_rawspectrum):
         """Test retrieving a spectrum by its ID (spectrum found)."""
