@@ -2,6 +2,13 @@ import click
 
 from mumble import PSMHandler
 
+import time
+
+import warnings
+from sqlalchemy import exc
+
+# Suppress SAWarning from SQLAlchemy (packages/pyteomics/mass/unimod.py)
+# warnings.filterwarnings('ignore', category=exc.SAWarning)
 
 @click.command("cli", context_settings={"show_default": True})
 @click.argument(
@@ -103,6 +110,7 @@ def main(
 
     The `main` function is the entry point for processing Peptide Spectrum Matches (PSMs) with potential mass modifications. It reads the input PSM file, identifies possible modifications based on mass shifts found by the search engine, and generates new PSM entries with these modifications. The function can handle different file types, apply amino acid combination modifications, and incorporate decoy sequences if specified. The resulting modified PSM list can be output in various formats, allowing for easy integration into downstream analysis pipelines.
     """
+    t1= time.perf_counter()
     psm_handler = PSMHandler(
         aa_combinations=aa_combinations, fasta_file=fasta_file, mass_error=mass_error, combination_length=num_modifications_combination, exclude_mutations=exclude_mutations
     )
@@ -112,9 +120,14 @@ def main(
         generate_modified_decoys=generate_modified_decoys,
         keep_original=keep_original,
     )
+    t2= time.perf_counter()
+    runtime_ms = (t2 - t1) * 1000
+    print(f"Computed in {runtime_ms:0.2f} milliseconds\n")
+
     psm_handler.write_modified_psm_list(
         modified_psm_list, output_file=output_file, psm_file_type=filetype_write
     )
+
 
 
 if __name__ == "__main__":
