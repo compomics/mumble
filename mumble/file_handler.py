@@ -17,10 +17,10 @@ class _SpectrumFileHandler:
         self.file_type = None
 
         # Determine file type and call the appropriate parser
-        if spectrum_file.endswith(".mgf"):
+        if spectrum_file.lower().endswith(".mgf"):
             self.file_type = "MGF"
             self._parse_mgf()
-        elif spectrum_file.endswith(".mzml"):
+        elif spectrum_file.lower().endswith(".mzml"):
             self.file_type = "MZML"
             self._parse_mzml()
         else:
@@ -48,7 +48,6 @@ class _SpectrumFileHandler:
             logging.info(f"Parsed {len(self.spectra)} spectra from {self.spectrum_file}")
         except Exception as e:
             logging.error(f"Error parsing MGF file {self.spectrum_file}: {e}")
-        x = 10
 
     def _parse_mzml(self):
         """Parse an mzML file and store each spectrum as a RawSpectrum."""
@@ -75,6 +74,7 @@ class _SpectrumFileHandler:
             logging.info(f"Parsed {len(self.spectra)} spectra from {self.spectrum_file}")
         except Exception as e:
             logging.error(f"Error parsing mzML file {self.spectrum_file}: {e}")
+        x=10
 
     def get_spectrum(self, spectrum_id: str):
         """
