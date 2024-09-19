@@ -603,7 +603,7 @@ class _ModificationHandler:
 
         # remove duplicate locations
         return set(loc_list)
-
+    
     def localize_mass_shift(self, psm) -> list[namedtuple]:
         """Give potential localisations of a mass shift in a peptide
 
@@ -611,7 +611,7 @@ class _ModificationHandler:
             psm (psm_utils.PSM): PSM object
 
         return:
-            list: List of Modification_candidate([localised_mass_shift])
+            list: List of Modification_candidate([Localised_mass_shift])
         """
         expmass = mz_to_mass(psm.precursor_mz, psm.get_precursor_charge())
         calcmass = calculate_mass(psm.peptidoform.composition)
@@ -627,58 +627,45 @@ class _ModificationHandler:
         except KeyError:
             return None
 
+        Localised_mass_shift = namedtuple("Localised_mass_shift", ["loc", "modification"])
         Modification_candidate = namedtuple("Modification_candidate", ["Localised_mass_shifts"])
         
-        # cache to store results for combinations
-        combination_cache = {}
+        # Unified cache for both individual modifications and combined localizations
+        cache = {}
         
-        def check_combination(combination, psm):
-            if not combination:
-                return []
+        def get_single_mod_localizations(mod_name, psm):
+            if mod_name in cache:
+                return cache[mod_name]
             
-            if combination in combination_cache:
-                return combination_cache[combination]
-            
-            if len(combination) == 1:
-                # Case: combination with no child combinations and not cached
-                mod_name = combination[0]
-                residues = self.name_to_mass_residue_dict[mod_name].residues
-                restrictions = self.name_to_mass_residue_dict[mod_name].restrictions    
-                localizations = self.get_localisation(psm, mod_name, residues, restrictions)
-                # Store the results as a list of feasible modification candidates
-                result = [Modification_candidate(Localised_mass_shifts=[localization]) for localization in localizations]
-                combination_cache[combination] = result
-                return result
-            
-            else:
-                # Case: combination with child combinations and not cached
-                # child_combinations = [combo for combo in itertools.product(*[[(mod,) for mod in combination]])]
-                child_combinations = itertools.product(combination)
+            residues = self.name_to_mass_residue_dict[mod_name].residues
+            restrictions = self.name_to_mass_residue_dict[mod_name].restrictions    
+            localizations = self.get_localisation(psm, mod_name, residues, restrictions)
+            cache[mod_name] = localizations
+            return localizations
 
-                
-                # Get possible mass shift combinations for each child
-                child_results = []
-                for child in child_combinations:
-                    child_results.append(check_combination(child, psm))
-                
-                # Combine child mass shift possibilities
-                combined_results = []
-                for child_result_list in itertools.product(*child_results):
-                    # Flatten the list of Localised_mass_shifts from all child results
-                    all_shifts = [shift for result in child_result_list for shift in result.Localised_mass_shifts]
-                    
-                    # Check for position conflicts
-                    positions = [shift.loc for shift in all_shifts]
-                    if len(set(positions)) == len(positions):  # No overlap in positions
-                        combined_results.append(Modification_candidate(Localised_mass_shifts=all_shifts))
-                
-                combination_cache[combination] = combined_results
-                return combined_results
+        def combine_localizations(loc_lists):
+            # Create a hashable key for the cache
+            cache_key = tuple(tuple(sorted((str(loc.loc), loc.modification) for loc in sublist)) for sublist in loc_lists)
+            
+            if cache_key in cache:
+                return cache[cache_key]
+            
+            result = []
+            for combination in itertools.product(*loc_lists):
+                positions = [loc.loc for loc in combination]
+                if len(set(positions)) == len(positions):  # No overlap in positions
+                    result.append(Modification_candidate(Localised_mass_shifts=[Localised_mass_shift(loc=loc.loc, modification=loc.modification) for loc in combination]))
+            
+            cache[cache_key] = result
+            return result
 
         feasible_modifications_candidates = []
-        for potential_mods_combination in potential_modifications_tuples:
-            # check every combination recursively
-            feasible_modifications_candidates.extend(check_combination(potential_mods_combination, psm))
+        for combination in potential_modifications_tuples:
+            # Get localizations for each modification in the combination
+            individual_localizations = [get_single_mod_localizations(mod, psm) for mod in combination]
+            
+            # Combine localizations
+            feasible_modifications_candidates.extend(combine_localizations(individual_localizations))
 
         return feasible_modifications_candidates if feasible_modifications_candidates else None
 
