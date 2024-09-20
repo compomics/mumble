@@ -26,12 +26,11 @@ class PSMHandler:
         Constructor of the class.
 
         Args:
-            input_file (str): Path to the input file
-            filetype (str): Type of the input file to read with PSM_utlis.io.read_file
-            aa_combinations (int, optional): Number of amino acid combinations to add as modification. Defaults to 0.
-            fasta_file (str, optional): Path to the fasta file. Defaults to None.
-            mass_error (float, optional): Mass error for the mass shift. Defaults to 0.02.
-            exclude_mutations (bool, optional): If True, modifications with the classification 'AA substitution' will be excluded. Defaults to False.
+            aa_combinations (int, optional): Number of amino acid combinations to add as modifications. Defaults to 0.
+            fasta_file (str, optional): Path to the FASTA file for protein sequence data. Defaults to None.
+            mass_error (float, optional): Allowed mass error for localizing mass shifts. Defaults to 0.02.
+            combination_length (int, optional): Length of amino acid combinations for modifications. Defaults to 1.
+            exclude_mutations (bool, optional): If True, excludes modifications classified as 'AA substitution'. Defaults to False.
         """
 
         # initialize modification seeker
@@ -71,14 +70,14 @@ class PSMHandler:
 
     def _return_mass_shifted_peptidoform(self, modification_tuple_list, peptidoform) -> Peptidoform:
         """
-        Apply a modification tuple to a peptidoform.
+        Apply a list of modification tuples to a peptidoform.
 
         Args:
-            modification_tuple_list list(tuple): List of Modification_candidate namedtuple, containg a list of Localised_mass_shift nampedtuple
-            peptidoform (psm_utils.Peptidoform): Peptidoform object
+            modification_tuple_list (list of tuples): List of modification tuples containing local mass shifts.
+            peptidoform (psm_utils.Peptidoform): Original peptidoform object to modify.
 
-        return:
-            psm_utils.Peptidoform: Peptidoform object
+        Returns:
+            list of psm_utils.Peptidoform: List of new peptidoform objects with applied modifications, or None if conflicting modifications exist.
         """
 
         new_peptidoforms = []
@@ -155,12 +154,12 @@ class PSMHandler:
         Get modified peptidoforms derived from a single PSM.
 
         Args:
-            psm (psm_utils.PSM): PSM object
-            keep_original (bool, optional): Keep the original PSM. Defaults to False.
-            warn (bool, optional): Warn if no modifications are found. Defaults to True.
+            psm (psm_utils.PSM): Original PSM object.
+            keep_original (bool, optional): Whether to keep the original PSM alongside modified ones. Defaults to False.
+            warn (bool, optional): Whether to log a warning if no modifications are found. Defaults to True.
 
-        return:
-            list: List of modified PSMs
+        Returns:
+            list: List of modified PSMs, or None if no modifications were applied.
         """
         modified_peptidoforms = []
         modification_tuple_list = self.modification_handler.localize_mass_shift(psm)
@@ -204,16 +203,16 @@ class PSMHandler:
         self, psm_list, psm_file_type="infer", generate_modified_decoys=False, keep_original=False
     ) -> PSMList:
         """
-        Add modified psms to a psm list
+        Add modified PSMs to a PSMList based on open modification searches.
 
-        args:
-            psm_list (str, list, PSMList): Path to the psm file, list of PSMs or PSMList object
-            psm_file_type (str, optional): Type of the input file to read with PSM_utlis.io.read_file. Defaults to "infer" only used if psm_list is filepath.
-            generate_modified_decoys (bool, optional): Generate modified decoys. Defaults to False.
-            keep_original (bool, optional): Keep the original PSMs. Defaults to False.
+        Args:
+            psm_list (str, list, or PSMList): Path to a PSM file, list of PSMs, or a PSMList object.
+            psm_file_type (str, optional): Type of PSM file to read, inferred automatically if not provided. Defaults to "infer".
+            generate_modified_decoys (bool, optional): Whether to generate decoys for the modified PSMs. Defaults to False.
+            keep_original (bool, optional): Whether to keep the original unmodified PSMs. Defaults to False.
 
-        return:
-            psm_utils.PSMList: PSMList object
+        Returns:
+            psm_utils.PSMList: A new PSMList object containing the modified PSMs.
         """
 
         logger.info(
