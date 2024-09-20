@@ -1,7 +1,7 @@
 import logging
 import numpy as np
 import pandas as pd
-from psm_utils import PSM
+from psm_utils import PSM, PSMList
 from pyteomics import mgf, mzml
 from rustyms import RawSpectrum
 
@@ -102,17 +102,30 @@ class _SpectrumFileHandler:
         except Exception as e:
             logging.error(f"Error parsing mzML file {self.spectrum_file}: {e}")
 
-    def get_spectrum(self, spectrum_id: str):
+    def get_spectrum_from_psm(self, psm: PSM):
         """
-        Retrieve a RawSpectrum by its ID.
+        Retrieve a RawSpectrum for a PSM by its ID.
         
         Args:
-            spectrum_id (str): The ID of the spectrum.
+            psm (PSM): psm object
         
         Returns:
             RawSpectrum: The retrieved spectrum or None if not found.
         """
-        return self.spectra.get(spectrum_id, None)
+        return self.spectra.get(psm.spectrum_id, None)
+
+    def get_spectra_from_psm_list(self, psmList: PSMList):
+        """
+        Retrieve all spectra for a PSMList.
+        
+        Args:
+            psmList (PSMList): A list of PSM objects.
+        
+        Returns:
+            list: A list of RawSpectrum objects corresponding to the PSMs.
+                None is included for any spectra not found.
+        """
+        return [self.spectra.get(psm.spectrum_id) for psm in psmList]
 
     def get_all_spectra(self):
         """
