@@ -8,7 +8,27 @@ from rustyms import RawSpectrum
 
 class _SpectrumFileHandler:
     """
-    Class to handle spectrum files (MGF or mzML) and retrieve spectra by spectrum ID.
+    A class to handle spectrum files (MGF or mzML) and retrieve spectra by spectrum ID.
+
+    This class parses spectrum files, stores the spectra, and provides methods to retrieve
+    spectra based on PSM (Peptide-Spectrum Match) information.
+
+    Attributes:
+        spectrum_file (str): Path to the spectrum file (MGF or mzML).
+        spectra (dict): A dictionary storing parsed spectra, keyed by spectrum ID.
+        file_type (str): The type of the spectrum file ('MGF' or 'MZML').
+
+    Methods:
+        get_spectrum_from_psm(psm): Retrieve a spectrum for a given PSM.
+        get_spectra_from_psm_list(psmList): Retrieve spectra for a list of PSMs.
+        get_all_spectra(): Retrieve all parsed spectra.
+
+    Raises:
+        ValueError: If an unsupported file format is provided.
+
+    Note:
+        This class uses the pyteomics library for parsing MGF and mzML files.
+        Parsed spectra are stored as `rustyms.RawSpectrum` objects.
     """
     
     def __init__(self, spectrum_file: str):
@@ -28,7 +48,16 @@ class _SpectrumFileHandler:
 
     
     def _parse_mgf(self):
-        """Parse an MGF file and store each spectrum as a RawSpectrum."""
+        """
+        Parse an MGF (Mascot Generic Format) file and store each spectrum as a RawSpectrum object.
+
+        This method reads the MGF file specified in self.spectrum_file, extracts relevant information
+        for each spectrum (including spectrum ID, precursor mass, retention time, and charge),
+        and stores each spectrum as a RawSpectrum object in the self.spectra dictionary.
+
+        Raises:
+            Exception: If there's an error during the parsing process, it's logged as an error.
+        """
         try:
             with mgf.MGF(self.spectrum_file) as spectra:
                 for spectrum in spectra:
@@ -63,7 +92,16 @@ class _SpectrumFileHandler:
             logging.error(f"Error parsing MGF file {self.spectrum_file}: {e}")
 
     def _parse_mzml(self):
-        """Parse an mzML file and store each spectrum as a RawSpectrum."""
+        """
+        Parse an mzML file and store each spectrum as a RawSpectrum object.
+
+        This method reads the mzML file specified in self.spectrum_file, extracts relevant information
+        for each spectrum (including spectrum ID, precursor mass, retention time, and charge),
+        and stores each spectrum as a RawSpectrum object in the self.spectra dictionary.
+
+        Raises:
+            Exception: If there's an error during the parsing process, it's logged as an error.
+        """
         try:
             with mzml.MzML(self.spectrum_file) as spectra:
                 for spectrum in spectra:
@@ -132,7 +170,8 @@ class _SpectrumFileHandler:
         Retrieve all parsed spectra.
         
         Returns:
-            dict: Dictionary of all spectra keyed by spectrum_id.
+            dict: A dictionary of all parsed spectra, where keys are spectrum IDs
+                and values are RawSpectrum objects.
         """
         return self.spectra
 
@@ -145,15 +184,27 @@ class _MetadataParser:
     @staticmethod
     def parse_csv_file(file_name: str, delimiter: str = "\t") -> list:
         """
-        Parse a CSV or TSV file containing peptidoform, spectrum_id, and precursor_mz.
+        Parse a CSV or TSV file containing PSM information and create PSM objects.
         
         Args:
             file_name (str): Path to the CSV or TSV file.
             delimiter (str, optional): Delimiter used in the file. Defaults to "\t".
 
         Returns:
-            list of PSMs: A list of PSM objects with the necessary information.
+            list: A list of PSM objects containing information from the file.
+                Each PSM object includes peptidoform, spectrum_id, and precursor_mz.
+
+        Raises:
+            FileNotFoundError: If the specified file is not found.
+            pd.errors.EmptyDataError: If the file is empty.
+            pd.errors.ParserError: If there's an error parsing the file.
+
+        Notes:
+            The file must contain at least the following columns: 
+            'peptidoform', 'spectrum_id', and 'precursor_mz'.
+            If any of these columns are missing, an error is logged and an empty list is returned.
         """
+        
         try:
             df = pd.read_csv(file_name, delimiter=delimiter)
         except FileNotFoundError as e:
