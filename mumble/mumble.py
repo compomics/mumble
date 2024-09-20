@@ -318,27 +318,11 @@ class _ModificationHandler:
         # TODO add amino acid variations (mutation) as flag
         self.combination_length = combination_length
         self.exclude_mutations = exclude_mutations
-        
+
         cache_file = self._get_cache_file_path()
 
-        if os.path.exists(cache_file):
-            print("using cache")
-            with open(cache_file, 'rb') as f:
-                cache_data = pickle.load(f)
-            self.modification_df = cache_data['modification_df']
-            self.monoisotopic_masses = cache_data['monoisotopic_masses']
-            self.modifications_names = cache_data['modifications_names']
-        else:
-            self.get_unimod_database()
-            self.monoisotopic_masses, self.modifications_names = self._generate_modifications_combinations_lists(self.combination_length)
-            cache_data = {
-                'modification_df': self.modification_df,
-                'monoisotopic_masses': self.monoisotopic_masses,
-                'modifications_names': self.modifications_names
-            }
-            print("creating cache")
-            with open(cache_file, 'wb') as f:
-                pickle.dump(cache_data, f)
+        # Load or generate data
+        self._load_or_generate_data(cache_file)
 
         if add_aa_combinations:
             if not fasta_file:
@@ -412,6 +396,48 @@ class _ModificationHandler:
             ],
         )
 
+    def _get_cache_file_path(self):
+        """
+        Get path to cache file for combinations of modifications
+        
+        return:
+            str: path to cache file
+        """
+        current_dir = os.path.dirname(os.path.realpath(__file__))
+        parent_dir = os.path.dirname(current_dir)
+        cache_dir = os.path.join(parent_dir, "modification_cache")
+        
+        # Create the cache directory if it doesn't exist
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        cache_file = os.path.join(cache_dir, f"length_{self.combination_length}_exclude_mutations_{self.exclude_mutations}.pkl")
+        
+        return cache_file
+    
+    def _load_or_generate_data(self, cache_file: str) -> None:
+        """Load data from cache or generate and save it if cache doesn't exist."""
+        if os.path.exists(cache_file):
+            print("using cache")
+            # Load data from cache file.
+            with open(cache_file, 'rb') as f:
+                cache_data = pickle.load(f)
+        else:
+            print("creating cache")
+            self.get_unimod_database()
+            self.monoisotopic_masses, self.modifications_names = self._generate_modifications_combinations_lists(self.combination_length)
+            cache_data = {
+                'modification_df': self.modification_df,
+                'monoisotopic_masses': self.monoisotopic_masses,
+                'modifications_names': self.modifications_names
+            }
+            # Save data to cache file.
+            with open(cache_file, 'wb') as f:
+                pickle.dump(cache_data, f)
+        
+        # Load data into class variables
+        self.modification_df = cache_data['modification_df']
+        self.monoisotopic_masses = cache_data['monoisotopic_masses']
+        self.modifications_names = cache_data['modifications_names']    
 
     def _generate_modifications_combinations_lists(self, combination_length=1):
         """
@@ -464,23 +490,6 @@ class _ModificationHandler:
         else:
             return [], []
 
-    def _get_cache_file_path(self):
-        """
-        Get path to cache file for combinations of modifications
-        
-        return:
-            str: path to cache file
-        """
-        current_dir = os.path.dirname(os.path.realpath(__file__))
-        parent_dir = os.path.dirname(current_dir)
-        cache_dir = os.path.join(parent_dir, "modification_cache")
-        
-        # Create the cache directory if it doesn't exist
-        os.makedirs(cache_dir, exist_ok=True)
-        
-        cache_file = os.path.join(cache_dir, f"length_{self.combination_length}_exclude_mutations_{self.exclude_mutations}.pkl")
-        
-        return cache_file
 
     def _get_name_to_mass_residue_dict(self):
         """
