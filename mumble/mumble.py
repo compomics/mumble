@@ -1,6 +1,8 @@
 from copy import deepcopy
 import logging
 import itertools
+import os
+import pickle
 from collections import namedtuple
 from pathlib import Path
 
@@ -315,7 +317,29 @@ class _ModificationHandler:
         """
         # TODO add amino acid variations (mutation) as flag
         self.combination_length = combination_length
-        self.get_unimod_database(exclude_mutations)
+        self.exclude_mutations = exclude_mutations
+        
+        cache_file = self._get_cache_file_path()
+
+        if os.path.exists(cache_file):
+            print("using cache")
+            with open(cache_file, 'rb') as f:
+                cache_data = pickle.load(f)
+            self.modification_df = cache_data['modification_df']
+            self.monoisotopic_masses = cache_data['monoisotopic_masses']
+            self.modifications_names = cache_data['modifications_names']
+        else:
+            self.get_unimod_database()
+            self.monoisotopic_masses, self.modifications_names = self._generate_modifications_combinations_lists(self.combination_length)
+            cache_data = {
+                'modification_df': self.modification_df,
+                'monoisotopic_masses': self.monoisotopic_masses,
+                'modifications_names': self.modifications_names
+            }
+            print("creating cache")
+            with open(cache_file, 'wb') as f:
+                pickle.dump(cache_data, f)
+
         if add_aa_combinations:
             if not fasta_file:
                 raise ValueError("Fasta file is required to add amino acid combinations")
@@ -387,63 +411,76 @@ class _ModificationHandler:
                 #"rounded_mass",
             ],
         )
-        
-        self.monoisotopic_masses, self.modifications_names = self._generate_modifications_combinations_lists(self.combination_length)
-        
 
 
-    def _generate_modifications_combinations_lists(self,combination_length=1):
+    def _generate_modifications_combinations_lists(self, combination_length=1):
         """
         Generates all possible combinations of modifications and calculates their summed monoisotopic masses.
-
-        This method creates combinations of modifications up to the specified combination length and calculates
+        This method creates unique combinations of modifications up to the specified combination length and calculates
         the total monoisotopic mass for each combination. The results are returned as two lists: one containing
         the summed monoisotopic masses and the other containing the corresponding modification combinations.
         The results are sorted by the summed monoisotopic masses in ascending order.
 
         Args:
-            combination_length (int, optional): Maximum number of modifications per combination. All lower numbers will be included as well. Dfeaults to 1.
+        combination_length (int, optional): Maximum number of modifications per combination. All lower numbers will be included as well. Defaults to 1.
 
         Returns:
-            tuple: A tuple containing two elements:
-                - List[float]: A list of summed monoisotopic masses, sorted in ascending order.
-                - List[tuple]: A list of tuples, where each tuple contains a combination of modification names
-                            corresponding to the summed monoisotopic masses.
+        tuple: A tuple containing two elements:
+            - List[float]: A list of summed monoisotopic masses, sorted in ascending order.
+            - List[tuple]: A list of tuples, where each tuple contains a combination of modification names
+                        corresponding to the summed monoisotopic masses.
         """
-
-        # remove duplicates from modification_df
+        # Remove duplicates from the modification DataFrame
         modification_filtered_df = self.modification_df[['name', 'monoisotopic_mass']].drop_duplicates()
+        mass_dict = dict(zip(modification_filtered_df['name'], modification_filtered_df['monoisotopic_mass']))
         
-        # add mods and masses for tuples with a single mod
-        modifications = [(item,) for item in modification_filtered_df['name']]
-        monoisotopic_masses = modification_filtered_df['monoisotopic_mass'].to_list()
-        
-        # only need to sum the masses when there's more then 1 mod
-        if combination_length > 1:
-            for r in range(2, combination_length + 1):
-                original_length = len(modifications)
-                name_combinations = itertools.combinations_with_replacement(modification_filtered_df['name'], r)
-                modifications.extend(name_combinations)
+        # Function to generate combinations
+        def generate_combinations(items, length):
+            if length == 0:
+                yield ()
+            elif length > 0:
+                for i in range(len(items)):
+                    for cc in generate_combinations(items[i:], length-1):
+                        yield (items[i],) + cc
 
-                mass_summes = [
-                    sum(mass for mass in comb) 
-                    for comb in track(
-                        itertools.combinations_with_replacement(modification_filtered_df['monoisotopic_mass'], r), 
-                        description=f"Calculating summed masses for combinations with length {r}",
-                        total=(len(modifications)-original_length)
-                        )
-                ]
-                monoisotopic_masses.extend(mass_summes)
-        
+        # Generate all unique combinations
+        all_modifications = []
+        all_masses = []
+        unique_combinations = set()
 
-        # Combine masses and modifications into tuples, sort by monoisotopic mass, then unzip back into two lists
-        combined = sorted(zip(monoisotopic_masses, modifications))
-            
+        for r in range(1, combination_length + 1):
+            for combo in generate_combinations(sorted(modification_filtered_df['name']), r):
+                if combo not in unique_combinations:
+                    unique_combinations.add(combo)
+                    all_modifications.append(combo)
+                    all_masses.append(sum(mass_dict[mod] for mod in combo))
+
+        # Sort the results by mass
+        combined = sorted(zip(all_masses, all_modifications))
+        
         if combined:
             monoisotopic_masses, modifications = zip(*combined)
             return list(monoisotopic_masses), list(modifications)
         else:
             return [], []
+
+    def _get_cache_file_path(self):
+        """
+        Get path to cache file for combinations of modifications
+        
+        return:
+            str: path to cache file
+        """
+        current_dir = os.path.dirname(os.path.realpath(__file__))
+        parent_dir = os.path.dirname(current_dir)
+        cache_dir = os.path.join(parent_dir, "modification_cache")
+        
+        # Create the cache directory if it doesn't exist
+        os.makedirs(cache_dir, exist_ok=True)
+        
+        cache_file = os.path.join(cache_dir, f"length_{self.combination_length}_exclude_mutations_{self.exclude_mutations}.pkl")
+        
+        return cache_file
 
     def _get_name_to_mass_residue_dict(self):
         """
@@ -535,72 +572,72 @@ class _ModificationHandler:
         return:
             list: List of Modification_candidate([localised_mass_shift])
         """
-
         expmass = mz_to_mass(psm.precursor_mz, psm.get_precursor_charge())
         calcmass = calculate_mass(psm.peptidoform.composition)
         mass_shift = expmass - calcmass
 
         # get all potential modifications
         try:
-            potential_modifications_indices = self._binary_range_search(self.monoisotopic_masses,mass_shift,self.mass_error)
+            potential_modifications_indices = self._binary_range_search(self.monoisotopic_masses, mass_shift, self.mass_error)
             if potential_modifications_indices:
                 potential_modifications_tuples = self.modifications_names[potential_modifications_indices[0]:potential_modifications_indices[1]+1]
             else:
                 return []
-                
         except KeyError:
             return None
-        Localised_mass_shift = namedtuple("Localised_mass_shift", ["loc", "modification"])
-        Modification_candidate = namedtuple("Modification_candidate",["Localised_mass_shifts"]) 
+
+        Modification_candidate = namedtuple("Modification_candidate", ["Localised_mass_shifts"])
+        
+        # cache to store results for combinations
+        combination_cache = {}
+        
+        def check_combination(combination, psm):
+            if not combination:
+                return []
+            
+            if combination in combination_cache:
+                return combination_cache[combination]
+            
+            if len(combination) == 1:
+                # Case: combination with no child combinations and not cached
+                mod_name = combination[0]
+                residues = self.name_to_mass_residue_dict[mod_name].residues
+                restrictions = self.name_to_mass_residue_dict[mod_name].restrictions    
+                localizations = self.get_localisation(psm, mod_name, residues, restrictions)
+                # Store the results as a list of feasible modification candidates
+                result = [Modification_candidate(Localised_mass_shifts=[localization]) for localization in localizations]
+                combination_cache[combination] = result
+                return result
+            
+            else:
+                # Case: combination with child combinations and not cached
+                # child_combinations = [combo for combo in itertools.product(*[[(mod,) for mod in combination]])]
+                child_combinations = itertools.product(combination)
+
+                
+                # Get possible mass shift combinations for each child
+                child_results = []
+                for child in child_combinations:
+                    child_results.append(check_combination(child, psm))
+                
+                # Combine child mass shift possibilities
+                combined_results = []
+                for child_result_list in itertools.product(*child_results):
+                    # Flatten the list of Localised_mass_shifts from all child results
+                    all_shifts = [shift for result in child_result_list for shift in result.Localised_mass_shifts]
+                    
+                    # Check for position conflicts
+                    positions = [shift.loc for shift in all_shifts]
+                    if len(set(positions)) == len(positions):  # No overlap in positions
+                        combined_results.append(Modification_candidate(Localised_mass_shifts=all_shifts))
+                
+                combination_cache[combination] = combined_results
+                return combined_results
 
         feasible_modifications_candidates = []
-        
-        # memo_cache = set()
-        # check combinations of potential modifications
         for potential_mods_combination in potential_modifications_tuples:
-            # Convert tuple to a hashable type for memoization
-            # tuple_key = tuple(potential_mods_tuple)
-            # if tuple_key in memo_cache:
-            #     if not memo_cache[tuple_key]:
-            #         continue  # Skip this tuple if it has already been found infeasible
-            
-            localized_modification_positions = []
-            feasible = True
-
-            # Collect all possible localization positions for each modification
-            for mod_name in potential_mods_combination:
-                residues = self.name_to_mass_residue_dict[mod_name].residues # returns duplicate positions (any/protein C-term or any/protein N-term)
-                restrictions = self.name_to_mass_residue_dict[mod_name].restrictions # returns duplicate positions (any/protein C-term or any/protein N-term)
-
-                localized_mods = self.get_localisation(psm, mod_name, residues, restrictions) # returns set so there is no duplicate locations
-
-                if localized_mods:
-                    # Collect positions for the current modification
-                    localized_modification_positions.append(localized_mods)
-                else:
-                    feasible = False
-                    break
-
-            # If any modification in the tuple is not feasible, skip this tuple
-            if not feasible:
-                continue
-            
-            # Generate all possible position combinations for the modifications
-            possible_combinations = list(itertools.product(*localized_modification_positions))
-
-            # Filter out combinations where two modifications would occupy the same position
-            valid_combinations = []
-            for combination in possible_combinations:
-                positions = [mod.loc for mod in combination]
-                if len(set(positions)) == len(positions):  # No overlap in positions
-                    # Create a list of Localised_mass_shift namedtuples for this valid combination
-                    valid_localized_mods = [Localised_mass_shift(loc=mod.loc, modification=mod.modification) for mod in combination]
-                    # Store the combination in the Potential_modification_candidate
-                    feasible_modifications_candidates.append(Modification_candidate(Localised_mass_shifts=valid_localized_mods))
-
-            # If there are valid combinations, store them
-            if valid_combinations:
-                feasible_modifications_candidates.append(valid_combinations)
+            # check every combination recursively
+            feasible_modifications_candidates.extend(check_combination(potential_mods_combination, psm))
 
         return feasible_modifications_candidates if feasible_modifications_candidates else None
 
