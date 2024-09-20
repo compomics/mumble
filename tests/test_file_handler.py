@@ -2,7 +2,7 @@ from io import StringIO
 from unittest.mock import MagicMock, mock_open, patch
 import numpy as np
 import pandas as pd
-from psm_utils import Peptidoform
+from psm_utils import Peptidoform, PSM, PSMList
 from rustyms import RawSpectrum, RawPeak
 import pytest
 from mumble.file_handler import _SpectrumFileHandler, _MetadataParser
@@ -11,8 +11,8 @@ class TestSpectrumFileHandler:
 
     @pytest.fixture
     def setup_spectrum_handler(self):
-        """Fixture to set up a mock _SpectrumFileHandler object."""
-        spectrum_handler = MagicMock(spec=_SpectrumFileHandler)
+        """Fixture to set up a _SpectrumFileHandler object without any actual spectra."""
+        spectrum_handler = _SpectrumFileHandler("empty.mzml")
         return spectrum_handler
     
     @pytest.fixture
@@ -27,6 +27,25 @@ class TestSpectrumFileHandler:
             intensity_array=[10.0, 20.0, 30.0],
         )
         return rawSpectrum
+    
+    @pytest.fixture
+    def setup_psm(self):
+        """Fixture to set up a mock PSM object."""
+        return PSM(
+            peptidoform="ACDK",
+            spectrum_id="spectrum1",
+            run="run1",
+            score=0.95
+        )
+
+    @pytest.fixture
+    def setup_psm_list(self):
+        """Fixture to set up a PSMList."""
+        return PSMList(psm_list=[
+             PSM(peptidoform="ACDK", spectrum_id="spectrum1", score=140.2, retention_time=600.2),
+             PSM(peptidoform="CDEFR", spectrum_id="spectrum2", score=132.9, retention_time=1225.4),
+             PSM(peptidoform="DEM[Oxidation]K", spectrum_id="spectrum3", score=55.7, retention_time=3389.1),
+         ])
 
     def test_init_with_mgf_file(self):
         """Test initialization with a valid MGF file."""
@@ -240,38 +259,71 @@ class TestSpectrumFileHandler:
                     assert raw_peak.mz == expected_mz, f"Mismatch in {spectrum_id}, peak {peak_counter}: expected mz {expected_mz}, got {raw_peak.mz}"
                     assert raw_peak.intensity == expected_intensity, f"Mismatch in {spectrum_id}, peak {peak_counter}: expected intensity {expected_intensity}, got {raw_peak.intensity}"
 
-    def test_get_spectrum_found(self, setup_rawspectrum):
-        """Test retrieving a spectrum by its ID (spectrum found)."""
-        mock_spectrum = setup_rawspectrum
+        
+    def test_get_spectrum_from_psm(self, setup_spectrum_handler, setup_psm, setup_rawspectrum):
+        
+        spectrum_handler = setup_spectrum_handler
+        raw_spectrum = setup_rawspectrum
 
-        handler = _SpectrumFileHandler("test.mgf")
-        handler.spectra = {"spec1": mock_spectrum}
+        spectrum_handler.spectra = {"spectrum1": raw_spectrum}
+        result = spectrum_handler.get_spectrum_from_psm(setup_psm)
+        
+        assert result == raw_spectrum
 
-        spectrum = handler.get_spectrum("spec1")
-        
-        expected_spectrum = [(100,10),(200,20),(300,30)]
-        
-        assert spectrum is mock_spectrum
-    
-        # check data based on mock_spectrum
-        assert spectrum.mass == 500.5
-        assert spectrum.charge == 10.0
-        assert spectrum.num_scans == 3
-        assert spectrum.rt == 1.0
-        
-        # check spectrum/mz_array
-        for i, rawPeak in enumerate(spectrum.spectrum):
-            assert rawPeak.mz == expected_spectrum[i][0]
-            assert rawPeak.intensity == expected_spectrum[i][1]
-        
-    def test_get_spectrum_not_found(self, setup_rawspectrum):
-        """Test retrieving a spectrum by its ID (spectrum not found)."""
-        handler = _SpectrumFileHandler("test.mzml")
-        mock_spectrum = setup_rawspectrum
-        handler.spectra = {"spec1": mock_spectrum}
+    def test_get_spectrum_from_psm_not_found(self, setup_spectrum_handler, setup_psm):
 
-        spectrum = handler.get_spectrum("unknown_spec_id")
-        assert spectrum is None
+        spectrum_handler = setup_spectrum_handler
+        spectrum_handler.spectra = {}
+
+        result = spectrum_handler.get_spectrum_from_psm(setup_psm)
+        
+        # Assert
+        assert result is None
+
+    def test_get_spectra_from_psm_list(self, setup_spectrum_handler, setup_psm_list, setup_rawspectrum):
+        
+        spectrum_handler = setup_spectrum_handler
+        # Arrange
+        spectrum_handler.spectra = {
+            "spectrum1": setup_rawspectrum,
+            "spectrum2": setup_rawspectrum,
+            "spectrum3": setup_rawspectrum
+        }
+        
+        # Act
+        result = spectrum_handler.get_spectra_from_psm_list(setup_psm_list)
+        
+        # Assert
+        assert len(result) == 3
+        assert all(spectrum == setup_rawspectrum for spectrum in result)
+
+    def test_get_spectra_from_psm_list_partial_match(self, setup_spectrum_handler, setup_psm_list, setup_rawspectrum):
+        # Arrange
+        
+        spectrum_handler = setup_spectrum_handler
+        raw_spectrum = setup_rawspectrum
+        
+        spectrum_handler.spectra = {
+            "spectrum1": raw_spectrum,
+            "spectrum3": raw_spectrum
+        }
+        
+        result = spectrum_handler.get_spectra_from_psm_list(setup_psm_list)
+        
+        assert len(result) == 3
+        assert result[0] == raw_spectrum
+        assert result[1] is None
+        assert result[2] == raw_spectrum
+
+    def test_get_spectra_from_psm_list_empty(self, setup_spectrum_handler):
+        
+        spectrum_handler = setup_spectrum_handler
+        spectrum_handler.spectra = {}
+        empty_psm_list = []
+        
+        result = spectrum_handler.get_spectra_from_psm_list(empty_psm_list)
+        
+        assert result == []
 
 
     
