@@ -23,7 +23,15 @@ logger = logging.getLogger(__name__)
 class PSMHandler:
     """Class that contains all information about the input file"""
 
-    def __init__(self, aa_combinations=0, fasta_file=None, mass_error=0.02, combination_length=1, exclude_mutations=False, **kwargs) -> None:
+    def __init__(
+        self,
+        aa_combinations=0,
+        fasta_file=None,
+        mass_error=0.02,
+        combination_length=1,
+        exclude_mutations=False,
+        **kwargs,
+    ) -> None:
         """
         Constructor of the class.
 
@@ -41,7 +49,7 @@ class PSMHandler:
             add_aa_combinations=aa_combinations,
             fasta_file=fasta_file,
             combination_length=combination_length,
-            exclude_mutations=exclude_mutations
+            exclude_mutations=exclude_mutations,
         )
         self.psm_file_name = None
 
@@ -70,7 +78,9 @@ class PSMHandler:
 
         return locations
 
-    def _return_mass_shifted_peptidoform(self, modification_tuple_list, peptidoform) -> Peptidoform:
+    def _return_mass_shifted_peptidoform(
+        self, modification_tuple_list, peptidoform
+    ) -> Peptidoform:
         """
         Apply a list of modification tuples to a peptidoform.
 
@@ -86,9 +96,9 @@ class PSMHandler:
         new_peptidoform = deepcopy(peptidoform)
 
         existing_mod_locations = self._find_mod_locations(new_peptidoform)
-        
+
         for modification_tuple in modification_tuple_list:
-            
+
             new_peptidoform = deepcopy(peptidoform)
             for localised_mass_shift in modification_tuple.Localised_mass_shifts:
                 loc, mod = localised_mass_shift
@@ -167,12 +177,12 @@ class PSMHandler:
         modification_tuple_list = self.modification_handler.localize_mass_shift(psm)
         if modification_tuple_list:
             new_proteoforms_list = self._return_mass_shifted_peptidoform(
-                    modification_tuple_list, psm.peptidoform
+                modification_tuple_list, psm.peptidoform
             )
             for new_proteoform in new_proteoforms_list:
                 new_psm = self._create_new_psm(
-                        psm,
-                        new_proteoform,
+                    psm,
+                    new_proteoform,
                 )
                 if new_psm is not None:
                     modified_peptidoforms.append(new_psm)
@@ -180,7 +190,7 @@ class PSMHandler:
             logger.warning(f"No modifications found for {psm}")
             return None
         if keep_original:
-               modified_peptidoforms.append(psm)
+            modified_peptidoforms.append(psm)
 
         return modified_peptidoforms
 
@@ -291,8 +301,7 @@ class PSMHandler:
 
         logger.info(f"Writing modified PSM list to {output_file}")
         write_file(psm_list=psm_list, filename=output_file, filetype=psm_file_type)
-        
-        
+
 
 class _ModificationHandler:
     """Class that handles modifications."""
@@ -303,7 +312,7 @@ class _ModificationHandler:
         add_aa_combinations=0,
         fasta_file=None,
         combination_length=1,
-        exclude_mutations=False
+        exclude_mutations=False,
     ) -> None:
         """
         Constructor of the class.
@@ -339,7 +348,7 @@ class _ModificationHandler:
     def get_unimod_database(self, exclude_mutations=False):
         """
         Read unimod databse to a dataframe.
-        
+
         Args:
             exclude_mutations (bool, optional): If True, modifications with the classification 'AA substitution' will be excluded. Defaults to False.
         """
@@ -355,10 +364,10 @@ class _ModificationHandler:
 
         modifications = []
         for mod in unimod_db.mods:
-            if (
-                not mod.username_of_poster == "unimod"
-            ):  # Do not include user submitted modifications
-                continue
+            # if (
+            #     not mod.username_of_poster == "unimod" and not mod.username_of_poster == "penner"
+            # ):  # Do not include user submitted modifications
+            #     continue
             name = mod.ex_code_name
             if not name:
                 name = mod.code_name
@@ -367,10 +376,10 @@ class _ModificationHandler:
             monoisotopic_mass = mod.monoisotopic_mass
             for specificity in mod.specificities:
                 classification = specificity.classification
-                if classification == "Isotopic label":  # Do not include isotopic labels
-                    continue
+                # if classification == "Isotopic label":  # Do not include isotopic labels
+                #     continue
                 if exclude_mutations and classification.classification == "AA substitution":
-                    continue 
+                    continue
                 position = specificity.position_id
                 aa = specificity.amino_acid
                 modifications.append(
@@ -392,52 +401,57 @@ class _ModificationHandler:
                 "classification",
                 "restriction",
                 "residue",
-                #"rounded_mass",
+                # "rounded_mass",
             ],
         )
 
     def _get_cache_file_path(self):
         """
         Get path to cache file for combinations of modifications
-        
+
         return:
             str: path to cache file
         """
         current_dir = os.path.dirname(os.path.realpath(__file__))
         parent_dir = os.path.dirname(current_dir)
         cache_dir = os.path.join(parent_dir, "modification_cache")
-        
-        # Create the cache directory if it doesn't exist
-        os.makedirs(cache_dir, exist_ok=True)
-        
-        cache_file = os.path.join(cache_dir, f"length_{self.combination_length}_exclude_mutations_{self.exclude_mutations}.pkl")
-        
+
+        # # Create the cache directory if it doesn't exist
+        # os.makedirs(cache_dir, exist_ok=True)
+
+        cache_file = os.path.join(
+            cache_dir,
+            f"length_{self.combination_length}_exclude_mutations_{self.exclude_mutations}.pkl",
+        )
+
         return cache_file
-    
+
     def _load_or_generate_data(self, cache_file: str) -> None:
         """Load data from cache or generate and save it if cache doesn't exist."""
         if os.path.exists(cache_file):
-            print("using cache")
+            logger.info("using cache")
             # Load data from cache file.
-            with open(cache_file, 'rb') as f:
+            with open(cache_file, "rb") as f:
                 cache_data = pickle.load(f)
         else:
-            print("creating cache")
+            logger.info("creating cache")
             self.get_unimod_database()
-            self.monoisotopic_masses, self.modifications_names = self._generate_modifications_combinations_lists(self.combination_length)
+            self.monoisotopic_masses, self.modifications_names = (
+                self._generate_modifications_combinations_lists(self.combination_length)
+            )
             cache_data = {
-                'modification_df': self.modification_df,
-                'monoisotopic_masses': self.monoisotopic_masses,
-                'modifications_names': self.modifications_names
+                "modification_df": self.modification_df,
+                "monoisotopic_masses": self.monoisotopic_masses,
+                "modifications_names": self.modifications_names,
             }
-            # Save data to cache file.
-            with open(cache_file, 'wb') as f:
-                pickle.dump(cache_data, f)
-        
+            # # Save data to cache file.
+            # with open(cache_file, "wb") as f:
+            #     pickle.dump(cache_data, f)
+
         # Load data into class variables
-        self.modification_df = cache_data['modification_df']
-        self.monoisotopic_masses = cache_data['monoisotopic_masses']
-        self.modifications_names = cache_data['modifications_names']    
+        self.modification_df = cache_data["modification_df"]
+        self.monoisotopic_masses = cache_data["monoisotopic_masses"]
+        self.modifications_names = cache_data["modifications_names"]
 
     def _generate_modifications_combinations_lists(self, combination_length=1):
         """
@@ -457,16 +471,20 @@ class _ModificationHandler:
                         corresponding to the summed monoisotopic masses.
         """
         # Remove duplicates from the modification DataFrame
-        modification_filtered_df = self.modification_df[['name', 'monoisotopic_mass']].drop_duplicates()
-        mass_dict = dict(zip(modification_filtered_df['name'], modification_filtered_df['monoisotopic_mass']))
-        
+        modification_filtered_df = self.modification_df[
+            ["name", "monoisotopic_mass"]
+        ].drop_duplicates()
+        mass_dict = dict(
+            zip(modification_filtered_df["name"], modification_filtered_df["monoisotopic_mass"])
+        )
+
         # Function to generate combinations
         def generate_combinations(items, length):
             if length == 0:
                 yield ()
             elif length > 0:
                 for i in range(len(items)):
-                    for cc in generate_combinations(items[i:], length-1):
+                    for cc in generate_combinations(items[i:], length - 1):
                         yield (items[i],) + cc
 
         # Generate all unique combinations
@@ -475,7 +493,7 @@ class _ModificationHandler:
         unique_combinations = set()
 
         for r in range(1, combination_length + 1):
-            for combo in generate_combinations(sorted(modification_filtered_df['name']), r):
+            for combo in generate_combinations(sorted(modification_filtered_df["name"]), r):
                 if combo not in unique_combinations:
                     unique_combinations.add(combo)
                     all_modifications.append(combo)
@@ -483,13 +501,12 @@ class _ModificationHandler:
 
         # Sort the results by mass
         combined = sorted(zip(all_masses, all_modifications))
-        
+
         if combined:
             monoisotopic_masses, modifications = zip(*combined)
             return list(monoisotopic_masses), list(modifications)
         else:
             return [], []
-
 
     def _get_name_to_mass_residue_dict(self):
         """
@@ -587,71 +604,84 @@ class _ModificationHandler:
 
         # get all potential modifications
         try:
-            potential_modifications_indices = self._binary_range_search(self.monoisotopic_masses, mass_shift, self.mass_error)
+            potential_modifications_indices = self._binary_range_search(
+                self.monoisotopic_masses, mass_shift, self.mass_error
+            )
             if potential_modifications_indices:
-                potential_modifications_tuples = self.modifications_names[potential_modifications_indices[0]:potential_modifications_indices[1]+1]
+                potential_modifications_tuples = self.modifications_names[
+                    potential_modifications_indices[0] : potential_modifications_indices[1] + 1
+                ]
             else:
                 return []
         except KeyError:
             return None
 
         Modification_candidate = namedtuple("Modification_candidate", ["Localised_mass_shifts"])
-        
+
         # cache to store results for combinations
         combination_cache = {}
-        
+
         def check_combination(combination, psm):
             if not combination:
                 return []
-            
+
             if combination in combination_cache:
                 return combination_cache[combination]
-            
+
             if len(combination) == 1:
                 # Case: combination with no child combinations and not cached
                 mod_name = combination[0]
                 residues = self.name_to_mass_residue_dict[mod_name].residues
-                restrictions = self.name_to_mass_residue_dict[mod_name].restrictions    
+                restrictions = self.name_to_mass_residue_dict[mod_name].restrictions
                 localizations = self.get_localisation(psm, mod_name, residues, restrictions)
                 # Store the results as a list of feasible modification candidates
-                result = [Modification_candidate(Localised_mass_shifts=[localization]) for localization in localizations]
+                result = [
+                    Modification_candidate(Localised_mass_shifts=[localization])
+                    for localization in localizations
+                ]
                 combination_cache[combination] = result
                 return result
-            
+
             else:
                 # Case: combination with child combinations and not cached
                 # child_combinations = [combo for combo in itertools.product(*[[(mod,) for mod in combination]])]
                 child_combinations = itertools.product(combination)
 
-                
                 # Get possible mass shift combinations for each child
                 child_results = []
                 for child in child_combinations:
                     child_results.append(check_combination(child, psm))
-                
+
                 # Combine child mass shift possibilities
                 combined_results = []
                 for child_result_list in itertools.product(*child_results):
                     # Flatten the list of Localised_mass_shifts from all child results
-                    all_shifts = [shift for result in child_result_list for shift in result.Localised_mass_shifts]
-                    
+                    all_shifts = [
+                        shift
+                        for result in child_result_list
+                        for shift in result.Localised_mass_shifts
+                    ]
+
                     # Check for position conflicts
                     positions = [shift.loc for shift in all_shifts]
                     if len(set(positions)) == len(positions):  # No overlap in positions
-                        combined_results.append(Modification_candidate(Localised_mass_shifts=all_shifts))
-                
+                        combined_results.append(
+                            Modification_candidate(Localised_mass_shifts=all_shifts)
+                        )
+
                 combination_cache[combination] = combined_results
                 return combined_results
 
         feasible_modifications_candidates = []
         for potential_mods_combination in potential_modifications_tuples:
             # check every combination recursively
-            feasible_modifications_candidates.extend(check_combination(potential_mods_combination, psm))
+            feasible_modifications_candidates.extend(
+                check_combination(potential_mods_combination, psm)
+            )
 
         return feasible_modifications_candidates if feasible_modifications_candidates else None
 
-
-    def _binary_range_search(self, arr, target, error) -> tuple[int,int]:
+    def _binary_range_search(self, arr, target, error) -> tuple[int, int]:
         """
         Find the indexes of values within a specified range in a ascending array.
 
@@ -661,20 +691,20 @@ class _ModificationHandler:
             error (int/float): The acceptable deviation from the target, defining the size of the range.
 
         Returns:
-            tuple: A tuple containing the start and end indexes of the values that fall within the range 
+            tuple: A tuple containing the start and end indexes of the values that fall within the range
             target - error, target + error]. If no values are found, returns an empty tuple.
         """
 
         def binary_left_index(arr, value) -> int:
-            '''
+            """
             Finds the index of the smallest element in a sorted array that is greater than or equal to a given value.
-            '''
+            """
 
-            left, right= 0,len(arr)-1
+            left, right = 0, len(arr) - 1
             result = len(arr)
 
             while left <= right:
-                mid = (left+right) // 2 # round to int
+                mid = (left + right) // 2  # round to int
 
                 if arr[mid] >= value:
                     result = mid
@@ -684,15 +714,15 @@ class _ModificationHandler:
             return result
 
         def binary_right_index(arr, value) -> int:
-            '''
+            """
             Finds the index of the biggest element in a sorted array that is less than or equal to a given value.
-            '''
+            """
 
-            left, right = 0,len(arr)-1
+            left, right = 0, len(arr) - 1
             result = len(arr)
 
             while left <= right:
-                mid = (left+right) // 2 # round to int
+                mid = (left + right) // 2  # round to int
 
                 if arr[mid] <= value:
                     result = mid
@@ -701,8 +731,8 @@ class _ModificationHandler:
                     right = mid - 1
             return result
 
-        left = binary_left_index(arr,target-error)
-        right = binary_right_index(arr,target+error)
+        left = binary_left_index(arr, target - error)
+        right = binary_right_index(arr, target + error)
 
         if left <= right:
             return (left, right)
