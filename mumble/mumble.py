@@ -3,6 +3,7 @@ import logging
 import itertools
 import os
 import pickle
+import tomllib
 from collections import namedtuple
 from pathlib import Path
 
@@ -30,7 +31,6 @@ class PSMHandler:
         mass_error=0.02,
         combination_length=1,
         exclude_mutations=False,
-        **kwargs,
     ) -> None:
         """
         Constructor of the class.
@@ -212,7 +212,12 @@ class PSMHandler:
         return PSMList(psm_list=modified_peptidoforms)
 
     def add_modified_psms(
-        self, psm_list, psm_file_type="infer", generate_modified_decoys=False, keep_original=False
+        self,
+        psm_list,
+        psm_file_type="infer",
+        generate_modified_decoys=False,
+        keep_original=False,
+        config_file=None,
     ) -> PSMList:
         """
         Add modified PSMs to a PSMList based on open modification searches.
@@ -231,7 +236,9 @@ class PSMHandler:
             f"Adding modified PSMs to PSMlist {'WITH' if keep_original else 'WITHOUT'} originals, {'INCLUDING' if generate_modified_decoys else 'EXCLUDING'} modfied decoys"
         )
 
-        parsed_psm_list = self.parse_psm_list(psm_list, psm_file_type)
+        # TODO: use ms2rescore config?
+        config = dict(tomllib.load(open(config_file, "rb"))) if config_file else {}
+        parsed_psm_list = self.parse_psm_list(psm_list, psm_file_type, config)
         new_psm_list = []
         num_added_psms = 0
 
@@ -255,7 +262,7 @@ class PSMHandler:
 
         return PSMList(psm_list=new_psm_list)
 
-    def parse_psm_list(self, psm_list, psm_file_type="infer") -> PSMList:
+    def parse_psm_list(self, psm_list, psm_file_type="infer", config=dict()) -> PSMList:
         """
         Parse the psm list to get the peptidoform and protein information
 
@@ -274,6 +281,7 @@ class PSMHandler:
         elif type(psm_list) is str:
             self.psm_file_name = Path(psm_list)
             psm_list = read_file(psm_list, filetype=psm_file_type)
+            psm_list.rename_modifications(config.get("modification_mapping", {}))
         elif type(psm_list) is not PSMList:
             raise TypeError("psm_list should be a path to a file or a PSMList object")
 
