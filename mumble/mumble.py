@@ -8,6 +8,8 @@ from collections import namedtuple
 from pathlib import Path
 
 import pandas as pd
+import numpy as np
+import h5py
 from psm_utils.io import read_file, write_file
 from psm_utils import PSMList, PSM, Peptidoform
 from psm_utils.utils import mz_to_mass
@@ -333,13 +335,9 @@ class _ModificationHandler:
             exclude_mutations (bool, optional): If True, modifications with the classification 'AA substitution' will be excluded. Defaults to False.
         """
         # TODO add amino acid variations (mutation) as flag
-        self.combination_length = combination_length
-        self.exclude_mutations = exclude_mutations
-
-        cache_file = self._get_cache_file_path()
-
-        # Load or generate data
-        self._load_or_generate_data(cache_file)
+        self.cache = ModificationCache(
+            combination_length=combination_length, exclude_mutations=exclude_mutations
+        )
 
         if add_aa_combinations:
             if not fasta_file:
@@ -348,173 +346,24 @@ class _ModificationHandler:
             self.protein_level_check = True
         else:
             self.protein_level_check = False
+
         self.name_to_mass_residue_dict = self._get_name_to_mass_residue_dict()
         self.aa_sub_dict = self._get_aa_sub_dict()
+
         self.mass_error = mass_error
         self.fasta_file = IndexedFASTA(fasta_file, label=r"^[\n]?>([\S]*)") if fasta_file else None
 
-    def get_unimod_database(self, exclude_mutations=False):
-        """
-        Read unimod databse to a dataframe.
+    def get_modifications(self):
+        # Get the path to the cache file
+        cache_file = self.cache._get_cache_file_path()
 
-        Args:
-            exclude_mutations (bool, optional): If True, modifications with the classification 'AA substitution' will be excluded. Defaults to False.
-        """
-        unimod_db = unimod.Unimod()
-        # if necesary, make distinction protein and peptide level C-term and N-term modifications
-        position_id_mapper = {
-            2: "anywhere",
-            3: "N-term",
-            4: "C-term",
-            5: "N-term",
-            6: "C-term",
-        }
+        # Load or generate data
+        self.cache._load_or_generate_data(cache_file)
 
-        modifications = []
-        for mod in unimod_db.mods:
-            # if (
-            #     not mod.username_of_poster == "unimod" and not mod.username_of_poster == "penner"
-            # ):  # Do not include user submitted modifications
-            #     continue
-            name = mod.ex_code_name
-            if not name:
-                name = mod.code_name
-            if ("Xlink" in name) or ("plex" in name):  # Do not include crosslinks
-                continue
-            monoisotopic_mass = mod.monoisotopic_mass
-            for specificity in mod.specificities:
-                classification = specificity.classification
-                # if classification == "Isotopic label":  # Do not include isotopic labels
-                #     continue
-                if exclude_mutations and classification.classification == "AA substitution":
-                    continue
-                position = specificity.position_id
-                aa = specificity.amino_acid
-                modifications.append(
-                    {
-                        "name": name,
-                        "monoisotopic_mass": monoisotopic_mass,
-                        "classification": classification.classification,
-                        "restriction": position_id_mapper[position],
-                        "residue": aa,
-                        "rounded_mass": round(monoisotopic_mass, 0),
-                    }
-                )
-
-        self.modification_df = pd.DataFrame(
-            modifications,
-            columns=[
-                "name",
-                "monoisotopic_mass",
-                "classification",
-                "restriction",
-                "residue",
-                # "rounded_mass",
-            ],
-        )
-
-    def _get_cache_file_path(self):
-        """
-        Get path to cache file for combinations of modifications
-
-        return:
-            str: path to cache file
-        """
-        current_dir = os.path.dirname(os.path.realpath(__file__))
-        parent_dir = os.path.dirname(current_dir)
-        cache_dir = os.path.join(parent_dir, "modification_cache")
-
-        # # Create the cache directory if it doesn't exist
-        # os.makedirs(cache_dir, exist_ok=True)
-
-        cache_file = os.path.join(
-            cache_dir,
-            f"length_{self.combination_length}_exclude_mutations_{self.exclude_mutations}.pkl",
-        )
-
-        return cache_file
-
-    def _load_or_generate_data(self, cache_file: str) -> None:
-        """Load data from cache or generate and save it if cache doesn't exist."""
-        if os.path.exists(cache_file):
-            logger.info("using cache")
-            # Load data from cache file.
-            with open(cache_file, "rb") as f:
-                cache_data = pickle.load(f)
-        else:
-            logger.info("creating cache")
-            self.get_unimod_database()
-            self.monoisotopic_masses, self.modifications_names = (
-                self._generate_modifications_combinations_lists(self.combination_length)
-            )
-            cache_data = {
-                "modification_df": self.modification_df,
-                "monoisotopic_masses": self.monoisotopic_masses,
-                "modifications_names": self.modifications_names,
-            }
-            # # Save data to cache file.
-            # with open(cache_file, "wb") as f:
-            #     pickle.dump(cache_data, f)
-
-        # Load data into class variables
-        self.modification_df = cache_data["modification_df"]
-        self.monoisotopic_masses = cache_data["monoisotopic_masses"]
-        self.modifications_names = cache_data["modifications_names"]
-
-    def _generate_modifications_combinations_lists(self, combination_length=1):
-        """
-        Generates all possible combinations of modifications and calculates their summed monoisotopic masses.
-        This method creates unique combinations of modifications up to the specified combination length and calculates
-        the total monoisotopic mass for each combination. The results are returned as two lists: one containing
-        the summed monoisotopic masses and the other containing the corresponding modification combinations.
-        The results are sorted by the summed monoisotopic masses in ascending order.
-
-        Args:
-        combination_length (int, optional): Maximum number of modifications per combination. All lower numbers will be included as well. Defaults to 1.
-
-        Returns:
-        tuple: A tuple containing two elements:
-            - List[float]: A list of summed monoisotopic masses, sorted in ascending order.
-            - List[tuple]: A list of tuples, where each tuple contains a combination of modification names
-                        corresponding to the summed monoisotopic masses.
-        """
-        # Remove duplicates from the modification DataFrame
-        modification_filtered_df = self.modification_df[
-            ["name", "monoisotopic_mass"]
-        ].drop_duplicates()
-        mass_dict = dict(
-            zip(modification_filtered_df["name"], modification_filtered_df["monoisotopic_mass"])
-        )
-
-        # Function to generate combinations
-        def generate_combinations(items, length):
-            if length == 0:
-                yield ()
-            elif length > 0:
-                for i in range(len(items)):
-                    for cc in generate_combinations(items[i:], length - 1):
-                        yield (items[i],) + cc
-
-        # Generate all unique combinations
-        all_modifications = []
-        all_masses = []
-        unique_combinations = set()
-
-        for r in range(1, combination_length + 1):
-            for combo in generate_combinations(sorted(modification_filtered_df["name"]), r):
-                if combo not in unique_combinations:
-                    unique_combinations.add(combo)
-                    all_modifications.append(combo)
-                    all_masses.append(sum(mass_dict[mod] for mod in combo))
-
-        # Sort the results by mass
-        combined = sorted(zip(all_masses, all_modifications))
-
-        if combined:
-            monoisotopic_masses, modifications = zip(*combined)
-            return list(monoisotopic_masses), list(modifications)
-        else:
-            return [], []
+        # Access the loaded or regenerated data
+        self.modification_df = self.cache.modification_df
+        self.monoisotopic_masses = self.cache.monoisotopic_masses
+        self.modifications_names = self.cache.modifications_names
 
     def _get_name_to_mass_residue_dict(self):
         """
@@ -792,7 +641,6 @@ class _ModificationHandler:
                         "classification": "AA addition",
                         "residue": "protein_level",
                         "restriction": "anywhere",
-                        "rounded_mass": round(mass, 0),
                     }
                     for name, mass in aa_to_mass_dict.items()
                 ),
@@ -833,3 +681,202 @@ class _ModificationHandler:
             found_additional_amino_acids.append(("postpeptide", additional_aa))
 
         return found_additional_amino_acids
+
+
+class ModificationCache:
+    """Class that handles the cache for modifications."""
+
+    def __init__(self, combination_length=1, exclude_mutations=False) -> None:
+        """
+        Constructor of the class.
+
+        Args:
+            combination_length (int, optional): Maximum number of modifications per combination. All lower numbers will be included as well. Defaults to 1.
+            exclude_mutations (bool, optional): If True, modifications with the classification 'AA substitution' will be excluded. Defaults to False.
+        """
+        self.combination_length = combination_length
+        self.exclude_mutations = exclude_mutations
+        self.monoisotopic_masses = []
+        self.modifications_names = []
+        self.modification_df = None
+
+    def _get_cache_file_path(self):
+        """
+        Get path to cache file for combinations of modifications.
+
+        return:
+            str: path to cache file
+        """
+        current_dir = os.path.dirname(os.path.realpath(__file__))
+        parent_dir = os.path.dirname(current_dir)
+        cache_dir = os.path.join(parent_dir, "modification_cache")
+
+        # Create the cache directory if it doesn't exist
+        os.makedirs(cache_dir, exist_ok=True)
+
+        cache_file = os.path.join(cache_dir, "modification_cache.h5")
+        return cache_file
+
+    def _load_or_generate_data(self, cache_file: str) -> None:
+        """Load data from cache or generate and save it if cache doesn't exist."""
+        if os.path.exists(cache_file):
+            logger.info("Checking cache")
+            with h5py.File(cache_file, "r") as f:
+                # Load metadata and check consistency
+                metadata = tuple(f["metadata"][:])
+                if metadata != (self.combination_length, self.exclude_mutations):
+                    logger.info("Metadata mismatch")
+                    self._regenerate_and_save_cache(cache_file)
+                    return
+
+                # Load data
+                self.monoisotopic_masses = f["monoisotopic_masses"][:]
+                self.modifications_names = f["modifications_names"][:]
+                self.modification_df = f["modification_df"][:]
+        else:
+            logger.info("Creating cache")
+            self._regenerate_and_save_cache(cache_file)
+
+    def get_unimod_database(self, exclude_mutations=False):
+        """
+        Read unimod databse to a dataframe.
+
+        Args:
+            exclude_mutations (bool, optional): If True, modifications with the classification 'AA substitution' will be excluded. Defaults to False.
+        """
+        unimod_db = unimod.Unimod()
+        # if necesary, make distinction protein and peptide level C-term and N-term modifications
+        position_id_mapper = {
+            2: "anywhere",
+            3: "N-term",
+            4: "C-term",
+            5: "N-term",
+            6: "C-term",
+        }
+
+        modifications = []
+        for mod in unimod_db.mods:
+            # if (
+            #     not mod.username_of_poster == "unimod" and not mod.username_of_poster == "penner"
+            # ):  # Do not include user submitted modifications
+            #     continue
+            name = mod.ex_code_name
+            if not name:
+                name = mod.code_name
+            if ("Xlink" in name) or ("plex" in name):  # Do not include crosslinks
+                continue
+            monoisotopic_mass = mod.monoisotopic_mass
+            for specificity in mod.specificities:
+                classification = specificity.classification
+                # if classification == "Isotopic label":  # Do not include isotopic labels
+                #     continue
+                if exclude_mutations and classification.classification == "AA substitution":
+                    continue
+                position = specificity.position_id
+                aa = specificity.amino_acid
+                modifications.append(
+                    {
+                        "name": name,
+                        "monoisotopic_mass": monoisotopic_mass,
+                        "classification": classification.classification,
+                        "restriction": position_id_mapper[position],
+                        "residue": aa,
+                    }
+                )
+
+        self.modification_df = pd.DataFrame(
+            modifications,
+            columns=[
+                "name",
+                "monoisotopic_mass",
+                "classification",
+                "restriction",
+                "residue",
+            ],
+        )
+
+    def _generate_modifications_combinations_lists(self, combination_length=1):
+        """
+        Generates all possible combinations of modifications and calculates their summed monoisotopic masses.
+        This method creates unique combinations of modifications up to the specified combination length and calculates
+        the total monoisotopic mass for each combination. The results are returned as two lists: one containing
+        the summed monoisotopic masses and the other containing the corresponding modification combinations.
+        The results are sorted by the summed monoisotopic masses in ascending order.
+
+        Args:
+        combination_length (int, optional): Maximum number of modifications per combination. All lower numbers will be included as well. Defaults to 1.
+
+        Returns:
+        tuple: A tuple containing two elements:
+            - List[float]: A list of summed monoisotopic masses, sorted in ascending order.
+            - List[tuple]: A list of tuples, where each tuple contains a combination of modification names
+                        corresponding to the summed monoisotopic masses.
+        """
+        # Remove duplicates from the modification DataFrame
+        modification_filtered_df = self.modification_df[
+            ["name", "monoisotopic_mass"]
+        ].drop_duplicates()
+        mass_dict = dict(
+            zip(modification_filtered_df["name"], modification_filtered_df["monoisotopic_mass"])
+        )
+
+        # Function to generate combinations
+        def generate_combinations(items, length):
+            if length == 0:
+                yield ()
+            elif length > 0:
+                for i in range(len(items)):
+                    for cc in generate_combinations(items[i:], length - 1):
+                        yield (items[i],) + cc
+
+        # Generate all unique combinations
+        all_modifications = []
+        all_masses = []
+        unique_combinations = set()
+
+        for r in range(1, combination_length + 1):
+            for combo in generate_combinations(sorted(modification_filtered_df["name"]), r):
+                if combo not in unique_combinations:
+                    unique_combinations.add(combo)
+                    all_modifications.append(combo)
+                    all_masses.append(sum(mass_dict[mod] for mod in combo))
+
+        # Sort the results by mass
+        combined = sorted(zip(all_masses, all_modifications))
+
+        if combined:
+            monoisotopic_masses, modifications = zip(*combined)
+            return list(monoisotopic_masses), list(modifications)
+        else:
+            return [], []
+
+    def _regenerate_and_save_cache(self, cache_file: str) -> None:
+        """Regenerate data and save it to the cache."""
+        self.get_unimod_database()
+        self.monoisotopic_masses, self.modifications_names = (
+            self._generate_modifications_combinations_lists(self.combination_length)
+        )
+
+        # Convert modification_df to a structured NumPy array for HDF5 compatibility
+        mod_df_structured = self.modification_df.to_records(
+            index=False
+        )  # Assuming it's a pandas DataFrame
+
+        with h5py.File(cache_file, "w") as f:
+            # Save metadata as a dataset
+            f.create_dataset(
+                "metadata",
+                data=np.array([self.combination_length, self.exclude_mutations], dtype="int"),
+            )
+
+            # Save monoisotopic masses and modification names
+            f.create_dataset("monoisotopic_masses", data=self.monoisotopic_masses)
+            f.create_dataset("modifications_names", data=self.modifications_names)
+
+            # Save modification_df as a structured array
+            f.create_dataset("modification_df", data=mod_df_structured)
+
+        # Update class variables
+        self.monoisotopic_masses = self.monoisotopic_masses
+        self.modifications_names = self.modifications_names
+        self.modification_df = self.modification_df
