@@ -1,5 +1,6 @@
 tests/test_data
 tests/test_data/*
+modification_cache/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

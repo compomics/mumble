@@ -2,14 +2,12 @@ from copy import deepcopy
 import logging
 import itertools
 import os
-import pickle
-import tomllib
+import json
 from collections import namedtuple
 from pathlib import Path
 
 import pandas as pd
-import numpy as np
-import h5py
+import pickle
 from psm_utils.io import read_file, write_file
 from psm_utils import PSMList, PSM, Peptidoform
 from psm_utils.utils import mz_to_mass
@@ -26,34 +24,62 @@ logger = logging.getLogger(__name__)
 class PSMHandler:
     """Class that contains all information about the input file"""
 
-    def __init__(
-        self,
-        aa_combinations=0,
-        fasta_file=None,
-        mass_error=0.02,
-        combination_length=1,
-        exclude_mutations=False,
-    ) -> None:
+    def __init__(self, config_file: str = None, **kwargs):
         """
-        Constructor of the class.
+        Initialize PSMHandler.
 
         Args:
-            aa_combinations (int, optional): Number of amino acid combinations to add as modifications. Defaults to 0.
-            fasta_file (str, optional): Path to the FASTA file for protein sequence data. Defaults to None.
-            mass_error (float, optional): Allowed mass error for localizing mass shifts. Defaults to 0.02.
-            combination_length (int, optional): Length of amino acid combinations for modifications. Defaults to 1.
-            exclude_mutations (bool, optional): If True, excludes modifications classified as 'AA substitution'. Defaults to False.
+            config_file (str, optional): Path to the JSON configuration file. Defaults to None.
+            **kwargs: Additional configurations to override file-based settings.
         """
+        self.config_loader = JSONConfigLoader(config_file) if config_file else None
+        self.params = self._load_parameters(kwargs)
 
         # initialize modification seeker
         self.modification_handler = _ModificationHandler(
-            mass_error=mass_error,
-            add_aa_combinations=aa_combinations,
-            fasta_file=fasta_file,
-            combination_length=combination_length,
-            exclude_mutations=exclude_mutations,
+            mass_error=self.params["mass_error"],
+            add_aa_combinations=self.params["aa_combinations"],
+            fasta_file=self.params["fasta_file"],
+            combination_length=self.params["combination_length"],
+            exclude_mutations=self.params["exclude_mutations"],
         )
         self.psm_file_name = None
+
+    def _load_parameters(self, overrides: dict) -> dict:
+        """
+        Load configuration parameters from the JSON file and apply overrides.
+
+        Args:
+            overrides (dict): Dictionary of parameters to override.
+
+        Returns:
+            dict: Consolidated configuration parameters.
+        """
+        keys_with_defaults = {
+            "mass_error": 0.02,
+            "combination_length": 1,
+            "exclude_mutations": False,
+            "aa_combinations": 0,
+            "fasta_file": None,
+            "psm_list": None,
+            "output_file": None,
+            "write_filetype": "tsv",
+            "keep_original": False,
+            "generate_modified_decoys": False,
+            "psm_file_type": "infer",
+            "modification_mapping": {},
+        }
+
+        # Use a single loop to consolidate parameters
+        params = {
+            key: overrides.get(
+                key, self.config_loader.get(key, default) if self.config_loader else default
+            )
+            for key, default in keys_with_defaults.items()
+        }
+        logger.info(f"Loaded parameters: {params}")
+
+        return params
 
     @staticmethod
     def _find_mod_locations(peptidoform):
@@ -215,11 +241,10 @@ class PSMHandler:
 
     def add_modified_psms(
         self,
-        psm_list,
-        psm_file_type="infer",
-        generate_modified_decoys=False,
-        keep_original=False,
-        config_file=None,
+        psm_list=None,
+        psm_file_type=None,
+        generate_modified_decoys=None,
+        keep_original=None,
     ) -> PSMList:
         """
         Add modified PSMs to a PSMList based on open modification searches.
@@ -233,14 +258,26 @@ class PSMHandler:
         Returns:
             psm_utils.PSMList: A new PSMList object containing the modified PSMs.
         """
+        if not psm_list:
+            if psm_list := self.params["psm_list"]:
+                pass
+            else:
+                raise ValueError("No PSM list provided")
+        if not generate_modified_decoys:
+            generate_modified_decoys = self.params["generate_modified_decoys"]
+        if not keep_original:
+            keep_original = self.params["keep_original"]
+        if not psm_file_type:
+            psm_file_type = self.params["psm_file_type"]
 
         logger.info(
             f"Adding modified PSMs to PSMlist {'WITH' if keep_original else 'WITHOUT'} originals, {'INCLUDING' if generate_modified_decoys else 'EXCLUDING'} modfied decoys"
         )
 
         # TODO: use ms2rescore config?
-        config = dict(tomllib.load(open(config_file, "rb"))) if config_file else {}
-        parsed_psm_list = self.parse_psm_list(psm_list, psm_file_type, config)
+        parsed_psm_list = self._parse_psm_list(
+            psm_list, psm_file_type, self.params["modification_mapping"]
+        )
         new_psm_list = []
         num_added_psms = 0
 
@@ -264,7 +301,9 @@ class PSMHandler:
 
         return PSMList(psm_list=new_psm_list)
 
-    def parse_psm_list(self, psm_list, psm_file_type="infer", config=dict()) -> PSMList:
+    def _parse_psm_list(
+        self, psm_list, psm_file_type="infer", modification_mapping=dict()
+    ) -> PSMList:
         """
         Parse the psm list to get the peptidoform and protein information
 
@@ -283,13 +322,13 @@ class PSMHandler:
         elif type(psm_list) is str:
             self.psm_file_name = Path(psm_list)
             psm_list = read_file(psm_list, filetype=psm_file_type)
-            psm_list.rename_modifications(config.get("modification_mapping", {}))
+            psm_list.rename_modifications(modification_mapping)
         elif type(psm_list) is not PSMList:
             raise TypeError("psm_list should be a path to a file or a PSMList object")
 
         return psm_list
 
-    def write_modified_psm_list(self, psm_list, output_file=None, psm_file_type="tsv"):
+    def write_modified_psm_list(self, psm_list, output_file=None, psm_file_type=None):
         """
         Write the modified PSM list to a file
 
@@ -301,13 +340,19 @@ class PSMHandler:
         return:
             None
         """
+        if not output_file:
+            if output_file := self.params["output_file"]:
+                pass
 
-        if self.psm_file_name and output_file is None:
-            output_file = self.psm_file_name.stem + "_modified"
+            elif self.psm_file_name:
+                output_file = self.psm_file_name.stem + "_modified"
 
-        elif not self.psm_file_name and output_file is None:
-            logger.warning("No output file specified")
-            output_file = "modified_psm_list"
+            elif not self.psm_file_name:
+                logger.warning("No output file specified")
+                output_file = "modified_psm_list"
+
+        if not psm_file_type:
+            psm_file_type = self.params["write_filetype"]
 
         logger.info(f"Writing modified PSM list to {output_file}")
         write_file(psm_list=psm_list, filename=output_file, filetype=psm_file_type)
@@ -338,6 +383,7 @@ class _ModificationHandler:
         self.cache = ModificationCache(
             combination_length=combination_length, exclude_mutations=exclude_mutations
         )
+        self.get_modifications()
 
         if add_aa_combinations:
             if not fasta_file:
@@ -721,20 +767,21 @@ class ModificationCache:
         """Load data from cache or generate and save it if cache doesn't exist."""
         if os.path.exists(cache_file):
             logger.info("Checking cache")
-            with h5py.File(cache_file, "r") as f:
-                # Load metadata and check consistency
-                metadata = tuple(f["metadata"][:])
-                if metadata != (self.combination_length, self.exclude_mutations):
-                    logger.info("Metadata mismatch")
-                    self._regenerate_and_save_cache(cache_file)
-                    return
+            with open(cache_file, "rb") as f:
+                cache_data = pickle.load(f)
 
-                # Load data
-                self.monoisotopic_masses = f["monoisotopic_masses"][:]
-                self.modifications_names = f["modifications_names"][:]
-                self.modification_df = f["modification_df"][:]
+            if cache_data["metadata"] == (self.combination_length, self.exclude_mutations):
+                try:
+                    logger.info("Loading cache data")
+                    self.modification_df = cache_data["modification_df"]
+                    self.monoisotopic_masses = cache_data["monoisotopic_masses"]
+                    self.modifications_names = cache_data["modifications_names"]
+                except KeyError:
+                    logger.info("Cache data missing")
+                    self._regenerate_and_save_cache(cache_file)
+            else:
+                self._regenerate_and_save_cache(cache_file)
         else:
-            logger.info("Creating cache")
             self._regenerate_and_save_cache(cache_file)
 
     def get_unimod_database(self, exclude_mutations=False):
@@ -852,31 +899,39 @@ class ModificationCache:
 
     def _regenerate_and_save_cache(self, cache_file: str) -> None:
         """Regenerate data and save it to the cache."""
+        logger.info("Generating cache data")
         self.get_unimod_database()
         self.monoisotopic_masses, self.modifications_names = (
             self._generate_modifications_combinations_lists(self.combination_length)
         )
 
-        # Convert modification_df to a structured NumPy array for HDF5 compatibility
-        mod_df_structured = self.modification_df.to_records(
-            index=False
-        )  # Assuming it's a pandas DataFrame
-
-        with h5py.File(cache_file, "w") as f:
-            # Save metadata as a dataset
-            f.create_dataset(
-                "metadata",
-                data=np.array([self.combination_length, self.exclude_mutations], dtype="int"),
+        with open(cache_file, "wb") as f:
+            pickle.dump(
+                {
+                    "metadata": (self.combination_length, self.exclude_mutations),
+                    "modification_df": self.modification_df,
+                    "monoisotopic_masses": self.monoisotopic_masses,
+                    "modifications_names": self.modifications_names,
+                },
+                f,
             )
-
-            # Save monoisotopic masses and modification names
-            f.create_dataset("monoisotopic_masses", data=self.monoisotopic_masses)
-            f.create_dataset("modifications_names", data=self.modifications_names)
-
-            # Save modification_df as a structured array
-            f.create_dataset("modification_df", data=mod_df_structured)
 
         # Update class variables
         self.monoisotopic_masses = self.monoisotopic_masses
         self.modifications_names = self.modifications_names
         self.modification_df = self.modification_df
+
+
+class JSONConfigLoader:
+    """Loads a single-level configuration from a JSON file."""
+
+    def __init__(self, config_file: str):
+        self.config = self._load_config(config_file)
+
+    def _load_config(self, config_file: str):
+        with open(config_file, "r") as f:
+            return json.load(f)
+
+    def get(self, key: str, default=None):
+        """Retrieve a configuration value."""
+        return self.config.get(key, default)
