@@ -213,11 +213,13 @@ class PSMHandler:
                     new_proteoform,
                 )
                 if new_psm is not None:
+                    psm["metadata"]["original"] = False
                     modified_peptidoforms.append(new_psm)
         elif warn:
             logger.warning(f"No modifications found for {psm}")
             return None
         if keep_original:
+            psm["metadata"]["original"] = True
             modified_peptidoforms.append(psm)
 
         return modified_peptidoforms
@@ -803,10 +805,10 @@ class ModificationCache:
 
         modifications = []
         for mod in unimod_db.mods:
-            # if (
-            #     not mod.username_of_poster == "unimod" and not mod.username_of_poster == "penner"
-            # ):  # Do not include user submitted modifications
-            #     continue
+            if (
+                not mod.username_of_poster == "unimod"
+            ):  # Do not include user submitted modifications
+                continue
             name = mod.ex_code_name
             if not name:
                 name = mod.code_name
@@ -815,8 +817,8 @@ class ModificationCache:
             monoisotopic_mass = mod.monoisotopic_mass
             for specificity in mod.specificities:
                 classification = specificity.classification
-                # if classification == "Isotopic label":  # Do not include isotopic labels
-                #     continue
+                if classification == "Isotopic label":  # Do not include isotopic labels
+                    continue
                 if exclude_mutations and classification.classification == "AA substitution":
                     continue
                 position = specificity.position_id
