@@ -16,8 +16,6 @@ from pyteomics.mass import std_aa_mass, calculate_mass, unimod
 from pyteomics.fasta import IndexedFASTA
 from rich.progress import track
 
-logging.basicConfig(format="[%(asctime)s]%(levelname)s => %(message)s", level=logging.INFO)
-
 logger = logging.getLogger(__name__)
 
 
@@ -77,7 +75,7 @@ class PSMHandler:
             )
             for key, default in keys_with_defaults.items()
         }
-        logger.info(f"Loaded parameters: {params}")
+        logger.info(f"Mumble config: {params}")
 
         return params
 
@@ -213,13 +211,13 @@ class PSMHandler:
                     new_proteoform,
                 )
                 if new_psm is not None:
-                    psm["metadata"]["original"] = False
+                    psm["metadata"]["original_psm"] = False
                     modified_peptidoforms.append(new_psm)
         elif warn:
             logger.warning(f"No modifications found for {psm}")
             return None
         if keep_original:
-            psm["metadata"]["original"] = True
+            psm["metadata"]["original_psm"] = True
             modified_peptidoforms.append(psm)
 
         return modified_peptidoforms
