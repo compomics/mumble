@@ -187,19 +187,23 @@ class PSMHandler:
         copy_psm.peptidoform = new_peptidoform
         return copy_psm
 
-    def _get_modified_peptidoforms(self, psm, keep_original=False, warn=True) -> list:
+    def _get_modified_peptidoforms(self, psm, keep_original=False) -> list:
         """
         Get modified peptidoforms derived from a single PSM.
 
         Args:
             psm (psm_utils.PSM): Original PSM object.
             keep_original (bool, optional): Whether to keep the original PSM alongside modified ones. Defaults to False.
-            warn (bool, optional): Whether to log a warning if no modifications are found. Defaults to True.
 
         Returns:
             list: List of modified PSMs, or None if no modifications were applied.
         """
         modified_peptidoforms = []
+
+        if keep_original:
+            psm["metadata"]["original_psm"] = True
+            modified_peptidoforms.append(psm)
+
         modification_tuple_list = self.modification_handler.localize_mass_shift(psm)
         if modification_tuple_list:
             new_proteoforms_list = self._return_mass_shifted_peptidoform(
@@ -211,32 +215,23 @@ class PSMHandler:
                     new_proteoform,
                 )
                 if new_psm is not None:
-                    psm["metadata"]["original_psm"] = False
+                    new_psm["metadata"]["original_psm"] = False
                     modified_peptidoforms.append(new_psm)
-        elif warn:
-            logger.warning(f"No modifications found for {psm}")
-            return None
-        if keep_original:
-            psm["metadata"]["original_psm"] = True
-            modified_peptidoforms.append(psm)
 
         return modified_peptidoforms
 
-    def get_modified_peptidoforms_list(self, psm, keep_original=False, warn=True) -> PSMList:
+    def get_modified_peptidoforms_list(self, psm, keep_original=False) -> PSMList:
         """
         Get modified peptidoforms derived from 1 PSM in a PSMList.
 
         Args:
             psm (psm_utils.PSM): PSM object
             keep_original (bool, optional): Keep the original PSM. Defaults to False.
-            warn (bool, optional): Warn if no modifications are found. Defaults to True.
 
         return:
             psm_utils.PSMList: PSMList object
         """
-        modified_peptidoforms = self._get_modified_peptidoforms(
-            psm, keep_original=keep_original, warn=warn
-        )
+        modified_peptidoforms = self._get_modified_peptidoforms(psm, keep_original=keep_original)
         return PSMList(psm_list=modified_peptidoforms)
 
     def add_modified_psms(
@@ -274,7 +269,6 @@ class PSMHandler:
             f"Adding modified PSMs to PSMlist {'WITH' if keep_original else 'WITHOUT'} originals, {'INCLUDING' if generate_modified_decoys else 'EXCLUDING'} modfied decoys"
         )
 
-        # TODO: use ms2rescore config?
         parsed_psm_list = self._parse_psm_list(
             psm_list, psm_file_type, self.params["modification_mapping"]
         )
@@ -288,9 +282,7 @@ class PSMHandler:
         ):
             if (psm.is_decoy) & (not generate_modified_decoys):
                 continue
-            new_psms = self._get_modified_peptidoforms(
-                psm, keep_original=keep_original, warn=False
-            )
+            new_psms = self._get_modified_peptidoforms(psm, keep_original=keep_original)
             if new_psms:
                 num_added_psms += len(new_psms) if not keep_original else len(new_psms) - 1
                 new_psm_list.extend(new_psms)
@@ -810,7 +802,9 @@ class ModificationCache:
             name = mod.ex_code_name
             if not name:
                 name = mod.code_name
-            if ("Xlink" in name) or ("plex" in name):  # Do not include crosslinks
+            if (
+                ("Xlink" in name) or ("plex" in name) or ("label" in name)
+            ):  # Do not include crosslinks
                 continue
             monoisotopic_mass = mod.monoisotopic_mass
             for specificity in mod.specificities:
