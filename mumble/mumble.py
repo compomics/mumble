@@ -586,9 +586,10 @@ class _ModificationHandler:
 
         return feasible_modifications_candidates if feasible_modifications_candidates else None
 
-    def _binary_range_search(self, arr, target, error) -> tuple[int, int]:
+    @staticmethod
+    def _binary_range_search(arr, target, error) -> tuple[int, int]:
         """
-        Find the indexes of values within a specified range in a ascending array.
+        Finds the indexes of values within a specified range in a sorted array.
 
         Args:
             arr (list of int/float): A sorted array in ascending order.
@@ -597,52 +598,47 @@ class _ModificationHandler:
 
         Returns:
             tuple: A tuple containing the start and end indexes of the values that fall within the range
-            target - error, target + error]. If no values are found, returns an empty tuple.
+                [target - error, target + error]. If no values are found, returns an empty tuple.
         """
+        if not arr:
+            return ()
 
         def binary_left_index(arr, value) -> int:
             """
             Finds the index of the smallest element in a sorted array that is greater than or equal to a given value.
             """
-
             left, right = 0, len(arr) - 1
-            result = len(arr)
-
             while left <= right:
-                mid = (left + right) // 2  # round to int
-
+                mid = (left + right) // 2
                 if arr[mid] >= value:
-                    result = mid
                     right = mid - 1
                 else:
                     left = mid + 1
-            return result
+            return left
 
         def binary_right_index(arr, value) -> int:
             """
-            Finds the index of the biggest element in a sorted array that is less than or equal to a given value.
+            Finds the index of the largest element in a sorted array that is less than or equal to a given value.
             """
-
             left, right = 0, len(arr) - 1
-            result = len(arr)
-
             while left <= right:
-                mid = (left + right) // 2  # round to int
-
+                mid = (left + right) // 2
                 if arr[mid] <= value:
-                    result = mid
                     left = mid + 1
                 else:
                     right = mid - 1
-            return result
+            return right
 
-        left = binary_left_index(arr, target - error)
-        right = binary_right_index(arr, target + error)
+        lower_bound = target - error
+        upper_bound = target + error
 
-        if left <= right:
+        left = binary_left_index(arr, lower_bound)
+        right = binary_right_index(arr, upper_bound)
+
+        # Check bounds and validity
+        if left <= right and left < len(arr) and right >= 0:
             return (left, right)
-        else:
-            return ()
+        return ()
 
     def _get_aa_sub_dict(self):
         """
@@ -978,9 +974,9 @@ class ModificationCache:
             req_columns = ["unimod_id", "name"]
             for key in req_columns:
                 if key in df.columns:
-                    if "restriction" in df.columns:
-                        grouped = df.groupby([key]).agg({"restriction": list}).reset_index()
-                        return {row[key]: row["restriction"] for _, row in grouped.iterrows()}, key
+                    if "residue" in df.columns:
+                        grouped = df.groupby([key]).agg({"residue": list}).reset_index()
+                        return {row[key]: row["residue"] for _, row in grouped.iterrows()}, key
                     else:
                         return {row[key]: None for _, row in df.iterrows()}, key
             raise ValueError("Modification file should contain 'id' or 'name' column")
