@@ -15,8 +15,18 @@ from pyteomics import proforma
 from pyteomics.mass import std_aa_mass, calculate_mass, unimod
 from pyteomics.fasta import IndexedFASTA
 from rich.progress import track
+from rich.logging import RichHandler
 
-logger = logging.getLogger(__name__)
+# setup logging
+logging.basicConfig(
+    level=logging.INFO,  # Set the logging level
+    format="%(message)s",  # Simple format for logging
+    datefmt="[%X]",  # Time format
+    handlers=[RichHandler(rich_tracebacks=True, show_path=False)],
+)
+
+# Add a logger
+logger = logging.getLogger("rich")
 
 
 class PSMHandler:
@@ -40,6 +50,7 @@ class PSMHandler:
             fasta_file=self.params["fasta_file"],
             combination_length=self.params["combination_length"],
             exclude_mutations=self.params["exclude_mutations"],
+            unimod_modification_file=self.params["unimod_modification_file"],
         )
         self.psm_file_name = None
 
@@ -65,6 +76,7 @@ class PSMHandler:
             "keep_original": False,
             "generate_modified_decoys": False,
             "psm_file_type": "infer",
+            "unimod_modification_file": None,
             "modification_mapping": {},
         }
 
@@ -314,7 +326,7 @@ class PSMHandler:
         elif type(psm_list) is str:
             self.psm_file_name = Path(psm_list)
             psm_list = read_file(psm_list, filetype=psm_file_type)
-            psm_list.rename_modifications(modification_mapping)
+            psm_list.rename_modifications({"+15.9949": "Oxidation"})
         elif type(psm_list) is not PSMList:
             raise TypeError("psm_list should be a path to a file or a PSMList object")
 
@@ -360,6 +372,7 @@ class _ModificationHandler:
         fasta_file=None,
         combination_length=1,
         exclude_mutations=False,
+        unimod_modification_file=None,
     ) -> None:
         """
         Constructor of the class.
@@ -373,9 +386,18 @@ class _ModificationHandler:
         """
         # TODO add amino acid variations (mutation) as flag
         self.cache = ModificationCache(
-            combination_length=combination_length, exclude_mutations=exclude_mutations
+            combination_length=combination_length,
+            exclude_mutations=exclude_mutations,
+            modification_file=unimod_modification_file,
         )
-        self.get_modifications()
+
+        self.modification_df = self.cache.modification_df
+        self.monoisotopic_masses = self.cache.monoisotopic_masses
+        self.modifications_names = self.cache.modifications_names
+
+        logger.info(
+            f'Including {len(self.modification_df["name"].unique())} unique modifications on {len(self.modification_df["name"])} sites'
+        )
 
         if add_aa_combinations:
             if not fasta_file:
@@ -390,18 +412,6 @@ class _ModificationHandler:
 
         self.mass_error = mass_error
         self.fasta_file = IndexedFASTA(fasta_file, label=r"^[\n]?>([\S]*)") if fasta_file else None
-
-    def get_modifications(self):
-        # Get the path to the cache file
-        cache_file = self.cache._get_cache_file_path()
-
-        # Load or generate data
-        self.cache._load_or_generate_data(cache_file)
-
-        # Access the loaded or regenerated data
-        self.modification_df = self.cache.modification_df
-        self.monoisotopic_masses = self.cache.monoisotopic_masses
-        self.modifications_names = self.cache.modifications_names
 
     def _get_name_to_mass_residue_dict(self):
         """
@@ -724,7 +734,9 @@ class _ModificationHandler:
 class ModificationCache:
     """Class that handles the cache for modifications."""
 
-    def __init__(self, combination_length=1, exclude_mutations=False) -> None:
+    def __init__(
+        self, combination_length=1, exclude_mutations=False, modification_file=None
+    ) -> None:
         """
         Constructor of the class.
 
@@ -734,9 +746,17 @@ class ModificationCache:
         """
         self.combination_length = combination_length
         self.exclude_mutations = exclude_mutations
+        self.modification_file = modification_file
+        self.modification_inclusion_dict, self.filter_key = self._read_unimod_file(
+            modification_file
+        )
         self.monoisotopic_masses = []
         self.modifications_names = []
         self.modification_df = None
+
+        # Load or generate data
+        cache_file = self._get_cache_file_path()
+        self._load_or_generate_data(cache_file)
 
     def _get_cache_file_path(self):
         """
@@ -762,7 +782,11 @@ class ModificationCache:
             with open(cache_file, "rb") as f:
                 cache_data = pickle.load(f)
 
-            if cache_data["metadata"] == (self.combination_length, self.exclude_mutations):
+            if cache_data["metadata"] == (
+                self.combination_length,
+                self.exclude_mutations,
+                self.modification_file,
+            ):
                 try:
                     logger.info("Loading cache data")
                     self.modification_df = cache_data["modification_df"]
@@ -776,15 +800,14 @@ class ModificationCache:
         else:
             self._regenerate_and_save_cache(cache_file)
 
-    def get_unimod_database(self, exclude_mutations=False):
+    def get_unimod_database(self):
         """
-        Read unimod databse to a dataframe.
+        Read Unimod database to a DataFrame.
 
         Args:
             exclude_mutations (bool, optional): If True, modifications with the classification 'AA substitution' will be excluded. Defaults to False.
         """
         unimod_db = unimod.Unimod()
-        # if necesary, make distinction protein and peptide level C-term and N-term modifications
         position_id_mapper = {
             2: "anywhere",
             3: "N-term",
@@ -795,36 +818,56 @@ class ModificationCache:
 
         modifications = []
         for mod in unimod_db.mods:
-            if (
-                not mod.username_of_poster == "unimod"
-            ):  # Do not include user submitted modifications
+            # Get modification name and ID
+            name = mod.ex_code_name or mod.code_name
+            unimod_id = mod.id
+
+            # Filter based on custom inclusion dictionary
+            if self.modification_inclusion_dict:
+                key = unimod_id if self.filter_key == "unimod_id" else name
+                if key not in self.modification_inclusion_dict.keys():
+                    continue
+
+            # Default filtering for Unimod database
+            elif mod.username_of_poster != "unimod" or any(
+                term in name.lower() for term in ["xlink", "plex", "label"]
+            ):
                 continue
-            name = mod.ex_code_name
-            if not name:
-                name = mod.code_name
-            if (
-                ("Xlink" in name) or ("plex" in name) or ("label" in name)
-            ):  # Do not include crosslinks
-                continue
+
             monoisotopic_mass = mod.monoisotopic_mass
+
             for specificity in mod.specificities:
                 classification = specificity.classification
-                if classification == "Isotopic label":  # Do not include isotopic labels
+
+                # Skip based on classification
+                if classification == "Isotopic label":
                     continue
-                if exclude_mutations and classification.classification == "AA substitution":
+                if self.exclude_mutations and classification == "AA substitution":
                     continue
+
                 position = specificity.position_id
                 aa = specificity.amino_acid
+
+                # Additional filtering based on inclusion dictionary
+                if self.modification_inclusion_dict:
+                    aa_list = self.modification_inclusion_dict.get(
+                        unimod_id if self.filter_key == "unimod_id" else name
+                    )
+                    if aa_list and aa not in aa_list:
+                        continue
+
+                # Append modification details
                 modifications.append(
                     {
                         "name": name,
                         "monoisotopic_mass": monoisotopic_mass,
-                        "classification": classification.classification,
-                        "restriction": position_id_mapper[position],
+                        "classification": classification,
+                        "restriction": position_id_mapper.get(position, "unknown"),
                         "residue": aa,
                     }
                 )
 
+        # Create a DataFrame from the modifications
         self.modification_df = pd.DataFrame(
             modifications,
             columns=[
@@ -902,7 +945,11 @@ class ModificationCache:
         with open(cache_file, "wb") as f:
             pickle.dump(
                 {
-                    "metadata": (self.combination_length, self.exclude_mutations),
+                    "metadata": (
+                        self.combination_length,
+                        self.exclude_mutations,
+                        self.modification_file,
+                    ),
                     "modification_df": self.modification_df,
                     "monoisotopic_masses": self.monoisotopic_masses,
                     "modifications_names": self.modifications_names,
@@ -914,6 +961,31 @@ class ModificationCache:
         self.monoisotopic_masses = self.monoisotopic_masses
         self.modifications_names = self.modifications_names
         self.modification_df = self.modification_df
+
+    def _read_unimod_file(self, modification_file=None):
+        """
+        Read a list of modifications from a file.
+
+        Args:
+            modification_file (str, optional): Path to the modification file. Defaults to None.
+
+        Returns:
+            list: List of modifications
+        """
+
+        if modification_file:
+            df = pd.read_csv(modification_file, sep="\t")
+            req_columns = ["unimod_id", "name"]
+            for key in req_columns:
+                if key in df.columns:
+                    if "restriction" in df.columns:
+                        grouped = df.groupby([key]).agg({"restriction": list}).reset_index()
+                        return {row[key]: row["restriction"] for _, row in grouped.iterrows()}, key
+                    else:
+                        return {row[key]: None for _, row in df.iterrows()}, key
+            raise ValueError("Modification file should contain 'id' or 'name' column")
+        else:
+            return None, None
 
 
 class JSONConfigLoader:

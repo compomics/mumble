@@ -9,6 +9,10 @@ CLI_OPTIONS = {
         "type": click.Path(exists=True),
         "help": "Path to the input file.",
     },
+    "unimod_modification_file": {
+        "type": click.Path(exists=True),
+        "help": "Restriction list of modifications to use from Unimod.",
+    },
     "psm_file_type": {
         "type": click.STRING,
         "help": "Type of the input file to read with PSM_utlis.io.read_file",
