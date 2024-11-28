@@ -1,3 +1,7 @@
+tests/test_data
+tests/test_data/*
+modification_cache/*
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -164,3 +168,7 @@ cython_debug/
 # project specific
 test_files/
 output_files/
+
+# vscode
+.vscode
+.vscode/*

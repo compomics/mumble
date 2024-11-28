@@ -2,12 +2,12 @@ from copy import deepcopy
 import logging
 import itertools
 import os
-import pickle
-import tomllib
+import json
 from collections import namedtuple
 from pathlib import Path
 
 import pandas as pd
+import pickle
 from psm_utils.io import read_file, write_file
 from psm_utils import PSMList, PSM, Peptidoform
 from psm_utils.utils import mz_to_mass
@@ -15,43 +15,81 @@ from pyteomics import proforma
 from pyteomics.mass import std_aa_mass, calculate_mass, unimod
 from pyteomics.fasta import IndexedFASTA
 from rich.progress import track
+from rich.logging import RichHandler
 
-logging.basicConfig(format="[%(asctime)s]%(levelname)s => %(message)s", level=logging.INFO)
+# setup logging
+logging.basicConfig(
+    level=logging.INFO,  # Set the logging level
+    format="%(message)s",  # Simple format for logging
+    datefmt="[%X]",  # Time format
+    handlers=[RichHandler(rich_tracebacks=True, show_path=False)],
+)
 
-logger = logging.getLogger(__name__)
+# Add a logger
+logger = logging.getLogger("rich")
 
 
 class PSMHandler:
     """Class that contains all information about the input file"""
 
-    def __init__(
-        self,
-        aa_combinations=0,
-        fasta_file=None,
-        mass_error=0.02,
-        combination_length=1,
-        exclude_mutations=False,
-    ) -> None:
+    def __init__(self, config_file: str = None, **kwargs):
         """
-        Constructor of the class.
+        Initialize PSMHandler.
 
         Args:
-            aa_combinations (int, optional): Number of amino acid combinations to add as modifications. Defaults to 0.
-            fasta_file (str, optional): Path to the FASTA file for protein sequence data. Defaults to None.
-            mass_error (float, optional): Allowed mass error for localizing mass shifts. Defaults to 0.02.
-            combination_length (int, optional): Length of amino acid combinations for modifications. Defaults to 1.
-            exclude_mutations (bool, optional): If True, excludes modifications classified as 'AA substitution'. Defaults to False.
+            config_file (str, optional): Path to the JSON configuration file. Defaults to None.
+            **kwargs: Additional configurations to override file-based settings.
         """
+        self.config_loader = JSONConfigLoader(config_file) if config_file else None
+        self.params = self._load_parameters(kwargs)
 
         # initialize modification seeker
         self.modification_handler = _ModificationHandler(
-            mass_error=mass_error,
-            add_aa_combinations=aa_combinations,
-            fasta_file=fasta_file,
-            combination_length=combination_length,
-            exclude_mutations=exclude_mutations,
+            mass_error=self.params["mass_error"],
+            add_aa_combinations=self.params["aa_combinations"],
+            fasta_file=self.params["fasta_file"],
+            combination_length=self.params["combination_length"],
+            exclude_mutations=self.params["exclude_mutations"],
+            unimod_modification_file=self.params["unimod_modification_file"],
         )
         self.psm_file_name = None
+
+    def _load_parameters(self, overrides: dict) -> dict:
+        """
+        Load configuration parameters from the JSON file and apply overrides.
+
+        Args:
+            overrides (dict): Dictionary of parameters to override.
+
+        Returns:
+            dict: Consolidated configuration parameters.
+        """
+        keys_with_defaults = {
+            "mass_error": 0.02,
+            "combination_length": 1,
+            "exclude_mutations": False,
+            "aa_combinations": 0,
+            "fasta_file": None,
+            "psm_list": None,
+            "output_file": None,
+            "write_filetype": "tsv",
+            "keep_original": False,
+            "generate_modified_decoys": False,
+            "psm_file_type": "infer",
+            "unimod_modification_file": None,
+            "modification_mapping": {},
+        }
+
+        # Use a single loop to consolidate parameters
+        params = {
+            key: overrides.get(
+                key, self.config_loader.get(key, default) if self.config_loader else default
+            )
+            for key, default in keys_with_defaults.items()
+        }
+        logger.info(f"Mumble config: {params}")
+
+        return params
 
     @staticmethod
     def _find_mod_locations(peptidoform):
@@ -161,19 +199,23 @@ class PSMHandler:
         copy_psm.peptidoform = new_peptidoform
         return copy_psm
 
-    def _get_modified_peptidoforms(self, psm, keep_original=False, warn=True) -> list:
+    def _get_modified_peptidoforms(self, psm, keep_original=False) -> list:
         """
         Get modified peptidoforms derived from a single PSM.
 
         Args:
             psm (psm_utils.PSM): Original PSM object.
             keep_original (bool, optional): Whether to keep the original PSM alongside modified ones. Defaults to False.
-            warn (bool, optional): Whether to log a warning if no modifications are found. Defaults to True.
 
         Returns:
             list: List of modified PSMs, or None if no modifications were applied.
         """
         modified_peptidoforms = []
+
+        if keep_original:
+            psm["metadata"]["original_psm"] = True
+            modified_peptidoforms.append(psm)
+
         modification_tuple_list = self.modification_handler.localize_mass_shift(psm)
         if modification_tuple_list:
             new_proteoforms_list = self._return_mass_shifted_peptidoform(
@@ -185,39 +227,31 @@ class PSMHandler:
                     new_proteoform,
                 )
                 if new_psm is not None:
+                    new_psm["metadata"]["original_psm"] = False
                     modified_peptidoforms.append(new_psm)
-        elif warn:
-            logger.warning(f"No modifications found for {psm}")
-            return None
-        if keep_original:
-            modified_peptidoforms.append(psm)
 
         return modified_peptidoforms
 
-    def get_modified_peptidoforms_list(self, psm, keep_original=False, warn=True) -> PSMList:
+    def get_modified_peptidoforms_list(self, psm, keep_original=False) -> PSMList:
         """
         Get modified peptidoforms derived from 1 PSM in a PSMList.
 
         Args:
             psm (psm_utils.PSM): PSM object
             keep_original (bool, optional): Keep the original PSM. Defaults to False.
-            warn (bool, optional): Warn if no modifications are found. Defaults to True.
 
         return:
             psm_utils.PSMList: PSMList object
         """
-        modified_peptidoforms = self._get_modified_peptidoforms(
-            psm, keep_original=keep_original, warn=warn
-        )
+        modified_peptidoforms = self._get_modified_peptidoforms(psm, keep_original=keep_original)
         return PSMList(psm_list=modified_peptidoforms)
 
     def add_modified_psms(
         self,
-        psm_list,
-        psm_file_type="infer",
-        generate_modified_decoys=False,
-        keep_original=False,
-        config_file=None,
+        psm_list=None,
+        psm_file_type=None,
+        generate_modified_decoys=None,
+        keep_original=None,
     ) -> PSMList:
         """
         Add modified PSMs to a PSMList based on open modification searches.
@@ -231,14 +265,25 @@ class PSMHandler:
         Returns:
             psm_utils.PSMList: A new PSMList object containing the modified PSMs.
         """
+        if not psm_list:
+            if psm_list := self.params["psm_list"]:
+                pass
+            else:
+                raise ValueError("No PSM list provided")
+        if not generate_modified_decoys:
+            generate_modified_decoys = self.params["generate_modified_decoys"]
+        if not keep_original:
+            keep_original = self.params["keep_original"]
+        if not psm_file_type:
+            psm_file_type = self.params["psm_file_type"]
 
         logger.info(
             f"Adding modified PSMs to PSMlist {'WITH' if keep_original else 'WITHOUT'} originals, {'INCLUDING' if generate_modified_decoys else 'EXCLUDING'} modfied decoys"
         )
 
-        # TODO: use ms2rescore config?
-        config = dict(tomllib.load(open(config_file, "rb"))) if config_file else {}
-        parsed_psm_list = self.parse_psm_list(psm_list, psm_file_type, config)
+        parsed_psm_list = self._parse_psm_list(
+            psm_list, psm_file_type, self.params["modification_mapping"]
+        )
         new_psm_list = []
         num_added_psms = 0
 
@@ -249,9 +294,7 @@ class PSMHandler:
         ):
             if (psm.is_decoy) & (not generate_modified_decoys):
                 continue
-            new_psms = self._get_modified_peptidoforms(
-                psm, keep_original=keep_original, warn=False
-            )
+            new_psms = self._get_modified_peptidoforms(psm, keep_original=keep_original)
             if new_psms:
                 num_added_psms += len(new_psms) if not keep_original else len(new_psms) - 1
                 new_psm_list.extend(new_psms)
@@ -262,7 +305,9 @@ class PSMHandler:
 
         return PSMList(psm_list=new_psm_list)
 
-    def parse_psm_list(self, psm_list, psm_file_type="infer", config=dict()) -> PSMList:
+    def _parse_psm_list(
+        self, psm_list, psm_file_type="infer", modification_mapping=dict()
+    ) -> PSMList:
         """
         Parse the psm list to get the peptidoform and protein information
 
@@ -281,13 +326,13 @@ class PSMHandler:
         elif type(psm_list) is str:
             self.psm_file_name = Path(psm_list)
             psm_list = read_file(psm_list, filetype=psm_file_type)
-            psm_list.rename_modifications(config.get("modification_mapping", {}))
+            psm_list.rename_modifications({"+15.9949": "Oxidation"})
         elif type(psm_list) is not PSMList:
             raise TypeError("psm_list should be a path to a file or a PSMList object")
 
         return psm_list
 
-    def write_modified_psm_list(self, psm_list, output_file=None, psm_file_type="tsv"):
+    def write_modified_psm_list(self, psm_list, output_file=None, psm_file_type=None):
         """
         Write the modified PSM list to a file
 
@@ -299,13 +344,19 @@ class PSMHandler:
         return:
             None
         """
+        if not output_file:
+            if output_file := self.params["output_file"]:
+                pass
 
-        if self.psm_file_name and output_file is None:
-            output_file = self.psm_file_name.stem + "_modified"
+            elif self.psm_file_name:
+                output_file = self.psm_file_name.stem + "_modified"
 
-        elif not self.psm_file_name and output_file is None:
-            logger.warning("No output file specified")
-            output_file = "modified_psm_list"
+            elif not self.psm_file_name:
+                logger.warning("No output file specified")
+                output_file = "modified_psm_list"
+
+        if not psm_file_type:
+            psm_file_type = self.params["write_filetype"]
 
         logger.info(f"Writing modified PSM list to {output_file}")
         write_file(psm_list=psm_list, filename=output_file, filetype=psm_file_type)
@@ -321,6 +372,7 @@ class _ModificationHandler:
         fasta_file=None,
         combination_length=1,
         exclude_mutations=False,
+        unimod_modification_file=None,
     ) -> None:
         """
         Constructor of the class.
@@ -333,13 +385,19 @@ class _ModificationHandler:
             exclude_mutations (bool, optional): If True, modifications with the classification 'AA substitution' will be excluded. Defaults to False.
         """
         # TODO add amino acid variations (mutation) as flag
-        self.combination_length = combination_length
-        self.exclude_mutations = exclude_mutations
+        self.cache = ModificationCache(
+            combination_length=combination_length,
+            exclude_mutations=exclude_mutations,
+            modification_file=unimod_modification_file,
+        )
 
-        cache_file = self._get_cache_file_path()
+        self.modification_df = self.cache.modification_df
+        self.monoisotopic_masses = self.cache.monoisotopic_masses
+        self.modifications_names = self.cache.modifications_names
 
-        # Load or generate data
-        self._load_or_generate_data(cache_file)
+        logger.info(
+            f'Including {len(self.modification_df["name"].unique())} unique modifications on {len(self.modification_df["name"])} sites'
+        )
 
         if add_aa_combinations:
             if not fasta_file:
@@ -348,173 +406,12 @@ class _ModificationHandler:
             self.protein_level_check = True
         else:
             self.protein_level_check = False
+
         self.name_to_mass_residue_dict = self._get_name_to_mass_residue_dict()
         self.aa_sub_dict = self._get_aa_sub_dict()
+
         self.mass_error = mass_error
         self.fasta_file = IndexedFASTA(fasta_file, label=r"^[\n]?>([\S]*)") if fasta_file else None
-
-    def get_unimod_database(self, exclude_mutations=False):
-        """
-        Read unimod databse to a dataframe.
-
-        Args:
-            exclude_mutations (bool, optional): If True, modifications with the classification 'AA substitution' will be excluded. Defaults to False.
-        """
-        unimod_db = unimod.Unimod()
-        # if necesary, make distinction protein and peptide level C-term and N-term modifications
-        position_id_mapper = {
-            2: "anywhere",
-            3: "N-term",
-            4: "C-term",
-            5: "N-term",
-            6: "C-term",
-        }
-
-        modifications = []
-        for mod in unimod_db.mods:
-            # if (
-            #     not mod.username_of_poster == "unimod" and not mod.username_of_poster == "penner"
-            # ):  # Do not include user submitted modifications
-            #     continue
-            name = mod.ex_code_name
-            if not name:
-                name = mod.code_name
-            if ("Xlink" in name) or ("plex" in name):  # Do not include crosslinks
-                continue
-            monoisotopic_mass = mod.monoisotopic_mass
-            for specificity in mod.specificities:
-                classification = specificity.classification
-                # if classification == "Isotopic label":  # Do not include isotopic labels
-                #     continue
-                if exclude_mutations and classification.classification == "AA substitution":
-                    continue
-                position = specificity.position_id
-                aa = specificity.amino_acid
-                modifications.append(
-                    {
-                        "name": name,
-                        "monoisotopic_mass": monoisotopic_mass,
-                        "classification": classification.classification,
-                        "restriction": position_id_mapper[position],
-                        "residue": aa,
-                        "rounded_mass": round(monoisotopic_mass, 0),
-                    }
-                )
-
-        self.modification_df = pd.DataFrame(
-            modifications,
-            columns=[
-                "name",
-                "monoisotopic_mass",
-                "classification",
-                "restriction",
-                "residue",
-                # "rounded_mass",
-            ],
-        )
-
-    def _get_cache_file_path(self):
-        """
-        Get path to cache file for combinations of modifications
-
-        return:
-            str: path to cache file
-        """
-        current_dir = os.path.dirname(os.path.realpath(__file__))
-        parent_dir = os.path.dirname(current_dir)
-        cache_dir = os.path.join(parent_dir, "modification_cache")
-
-        # # Create the cache directory if it doesn't exist
-        # os.makedirs(cache_dir, exist_ok=True)
-
-        cache_file = os.path.join(
-            cache_dir,
-            f"length_{self.combination_length}_exclude_mutations_{self.exclude_mutations}.pkl",
-        )
-
-        return cache_file
-
-    def _load_or_generate_data(self, cache_file: str) -> None:
-        """Load data from cache or generate and save it if cache doesn't exist."""
-        if os.path.exists(cache_file):
-            logger.info("using cache")
-            # Load data from cache file.
-            with open(cache_file, "rb") as f:
-                cache_data = pickle.load(f)
-        else:
-            logger.info("creating cache")
-            self.get_unimod_database()
-            self.monoisotopic_masses, self.modifications_names = (
-                self._generate_modifications_combinations_lists(self.combination_length)
-            )
-            cache_data = {
-                "modification_df": self.modification_df,
-                "monoisotopic_masses": self.monoisotopic_masses,
-                "modifications_names": self.modifications_names,
-            }
-            # # Save data to cache file.
-            # with open(cache_file, "wb") as f:
-            #     pickle.dump(cache_data, f)
-
-        # Load data into class variables
-        self.modification_df = cache_data["modification_df"]
-        self.monoisotopic_masses = cache_data["monoisotopic_masses"]
-        self.modifications_names = cache_data["modifications_names"]
-
-    def _generate_modifications_combinations_lists(self, combination_length=1):
-        """
-        Generates all possible combinations of modifications and calculates their summed monoisotopic masses.
-        This method creates unique combinations of modifications up to the specified combination length and calculates
-        the total monoisotopic mass for each combination. The results are returned as two lists: one containing
-        the summed monoisotopic masses and the other containing the corresponding modification combinations.
-        The results are sorted by the summed monoisotopic masses in ascending order.
-
-        Args:
-        combination_length (int, optional): Maximum number of modifications per combination. All lower numbers will be included as well. Defaults to 1.
-
-        Returns:
-        tuple: A tuple containing two elements:
-            - List[float]: A list of summed monoisotopic masses, sorted in ascending order.
-            - List[tuple]: A list of tuples, where each tuple contains a combination of modification names
-                        corresponding to the summed monoisotopic masses.
-        """
-        # Remove duplicates from the modification DataFrame
-        modification_filtered_df = self.modification_df[
-            ["name", "monoisotopic_mass"]
-        ].drop_duplicates()
-        mass_dict = dict(
-            zip(modification_filtered_df["name"], modification_filtered_df["monoisotopic_mass"])
-        )
-
-        # Function to generate combinations
-        def generate_combinations(items, length):
-            if length == 0:
-                yield ()
-            elif length > 0:
-                for i in range(len(items)):
-                    for cc in generate_combinations(items[i:], length - 1):
-                        yield (items[i],) + cc
-
-        # Generate all unique combinations
-        all_modifications = []
-        all_masses = []
-        unique_combinations = set()
-
-        for r in range(1, combination_length + 1):
-            for combo in generate_combinations(sorted(modification_filtered_df["name"]), r):
-                if combo not in unique_combinations:
-                    unique_combinations.add(combo)
-                    all_modifications.append(combo)
-                    all_masses.append(sum(mass_dict[mod] for mod in combo))
-
-        # Sort the results by mass
-        combined = sorted(zip(all_masses, all_modifications))
-
-        if combined:
-            monoisotopic_masses, modifications = zip(*combined)
-            return list(monoisotopic_masses), list(modifications)
-        else:
-            return [], []
 
     def _get_name_to_mass_residue_dict(self):
         """
@@ -689,9 +586,10 @@ class _ModificationHandler:
 
         return feasible_modifications_candidates if feasible_modifications_candidates else None
 
-    def _binary_range_search(self, arr, target, error) -> tuple[int, int]:
+    @staticmethod
+    def _binary_range_search(arr, target, error) -> tuple[int, int]:
         """
-        Find the indexes of values within a specified range in a ascending array.
+        Finds the indexes of values within a specified range in a sorted array.
 
         Args:
             arr (list of int/float): A sorted array in ascending order.
@@ -700,52 +598,47 @@ class _ModificationHandler:
 
         Returns:
             tuple: A tuple containing the start and end indexes of the values that fall within the range
-            target - error, target + error]. If no values are found, returns an empty tuple.
+                [target - error, target + error]. If no values are found, returns an empty tuple.
         """
+        if not arr:
+            return ()
 
         def binary_left_index(arr, value) -> int:
             """
             Finds the index of the smallest element in a sorted array that is greater than or equal to a given value.
             """
-
             left, right = 0, len(arr) - 1
-            result = len(arr)
-
             while left <= right:
-                mid = (left + right) // 2  # round to int
-
+                mid = (left + right) // 2
                 if arr[mid] >= value:
-                    result = mid
                     right = mid - 1
                 else:
                     left = mid + 1
-            return result
+            return left
 
         def binary_right_index(arr, value) -> int:
             """
-            Finds the index of the biggest element in a sorted array that is less than or equal to a given value.
+            Finds the index of the largest element in a sorted array that is less than or equal to a given value.
             """
-
             left, right = 0, len(arr) - 1
-            result = len(arr)
-
             while left <= right:
-                mid = (left + right) // 2  # round to int
-
+                mid = (left + right) // 2
                 if arr[mid] <= value:
-                    result = mid
                     left = mid + 1
                 else:
                     right = mid - 1
-            return result
+            return right
 
-        left = binary_left_index(arr, target - error)
-        right = binary_right_index(arr, target + error)
+        lower_bound = target - error
+        upper_bound = target + error
 
-        if left <= right:
+        left = binary_left_index(arr, lower_bound)
+        right = binary_right_index(arr, upper_bound)
+
+        # Check bounds and validity
+        if left <= right and left < len(arr) and right >= 0:
             return (left, right)
-        else:
-            return ()
+        return ()
 
     def _get_aa_sub_dict(self):
         """
@@ -792,7 +685,6 @@ class _ModificationHandler:
                         "classification": "AA addition",
                         "residue": "protein_level",
                         "restriction": "anywhere",
-                        "rounded_mass": round(mass, 0),
                     }
                     for name, mass in aa_to_mass_dict.items()
                 ),
@@ -833,3 +725,275 @@ class _ModificationHandler:
             found_additional_amino_acids.append(("postpeptide", additional_aa))
 
         return found_additional_amino_acids
+
+
+class ModificationCache:
+    """Class that handles the cache for modifications."""
+
+    def __init__(
+        self, combination_length=1, exclude_mutations=False, modification_file=None
+    ) -> None:
+        """
+        Constructor of the class.
+
+        Args:
+            combination_length (int, optional): Maximum number of modifications per combination. All lower numbers will be included as well. Defaults to 1.
+            exclude_mutations (bool, optional): If True, modifications with the classification 'AA substitution' will be excluded. Defaults to False.
+        """
+        self.combination_length = combination_length
+        self.exclude_mutations = exclude_mutations
+        self.modification_file = modification_file
+        self.modification_inclusion_dict, self.filter_key = self._read_unimod_file(
+            modification_file
+        )
+        self.monoisotopic_masses = []
+        self.modifications_names = []
+        self.modification_df = None
+
+        # Load or generate data
+        cache_file = self._get_cache_file_path()
+        self._load_or_generate_data(cache_file)
+
+    def _get_cache_file_path(self):
+        """
+        Get path to cache file for combinations of modifications.
+
+        return:
+            str: path to cache file
+        """
+        current_dir = os.path.dirname(os.path.realpath(__file__))
+        parent_dir = os.path.dirname(current_dir)
+        cache_dir = os.path.join(parent_dir, "modification_cache")
+
+        # Create the cache directory if it doesn't exist
+        os.makedirs(cache_dir, exist_ok=True)
+
+        cache_file = os.path.join(cache_dir, "modification_cache.h5")
+        return cache_file
+
+    def _load_or_generate_data(self, cache_file: str) -> None:
+        """Load data from cache or generate and save it if cache doesn't exist."""
+        if os.path.exists(cache_file):
+            logger.info("Checking cache")
+            with open(cache_file, "rb") as f:
+                cache_data = pickle.load(f)
+
+            if cache_data["metadata"] == (
+                self.combination_length,
+                self.exclude_mutations,
+                self.modification_file,
+            ):
+                try:
+                    logger.info("Loading cache data")
+                    self.modification_df = cache_data["modification_df"]
+                    self.monoisotopic_masses = cache_data["monoisotopic_masses"]
+                    self.modifications_names = cache_data["modifications_names"]
+                except KeyError:
+                    logger.info("Cache data missing")
+                    self._regenerate_and_save_cache(cache_file)
+            else:
+                self._regenerate_and_save_cache(cache_file)
+        else:
+            self._regenerate_and_save_cache(cache_file)
+
+    def get_unimod_database(self):
+        """
+        Read Unimod database to a DataFrame.
+
+        Args:
+            exclude_mutations (bool, optional): If True, modifications with the classification 'AA substitution' will be excluded. Defaults to False.
+        """
+        unimod_db = unimod.Unimod()
+        position_id_mapper = {
+            2: "anywhere",
+            3: "N-term",
+            4: "C-term",
+            5: "N-term",
+            6: "C-term",
+        }
+
+        modifications = []
+        for mod in unimod_db.mods:
+            # Get modification name and ID
+            name = mod.ex_code_name or mod.code_name
+            unimod_id = mod.id
+
+            # Filter based on custom inclusion dictionary
+            if self.modification_inclusion_dict:
+                key = unimod_id if self.filter_key == "unimod_id" else name
+                if key not in self.modification_inclusion_dict.keys():
+                    continue
+
+            # Default filtering for Unimod database
+            elif mod.username_of_poster != "unimod" or any(
+                term in name.lower() for term in ["xlink", "plex", "label"]
+            ):
+                continue
+
+            monoisotopic_mass = mod.monoisotopic_mass
+
+            for specificity in mod.specificities:
+                classification = specificity.classification
+
+                # Skip based on classification
+                if classification == "Isotopic label":
+                    continue
+                if self.exclude_mutations and classification == "AA substitution":
+                    continue
+
+                position = specificity.position_id
+                aa = specificity.amino_acid
+
+                # Additional filtering based on inclusion dictionary
+                if self.modification_inclusion_dict:
+                    aa_list = self.modification_inclusion_dict.get(
+                        unimod_id if self.filter_key == "unimod_id" else name
+                    )
+                    if aa_list and aa not in aa_list:
+                        continue
+
+                # Append modification details
+                modifications.append(
+                    {
+                        "name": name,
+                        "monoisotopic_mass": monoisotopic_mass,
+                        "classification": classification,
+                        "restriction": position_id_mapper.get(position, "unknown"),
+                        "residue": aa,
+                    }
+                )
+
+        # Create a DataFrame from the modifications
+        self.modification_df = pd.DataFrame(
+            modifications,
+            columns=[
+                "name",
+                "monoisotopic_mass",
+                "classification",
+                "restriction",
+                "residue",
+            ],
+        )
+
+    def _generate_modifications_combinations_lists(self, combination_length=1):
+        """
+        Generates all possible combinations of modifications and calculates their summed monoisotopic masses.
+        This method creates unique combinations of modifications up to the specified combination length and calculates
+        the total monoisotopic mass for each combination. The results are returned as two lists: one containing
+        the summed monoisotopic masses and the other containing the corresponding modification combinations.
+        The results are sorted by the summed monoisotopic masses in ascending order.
+
+        Args:
+        combination_length (int, optional): Maximum number of modifications per combination. All lower numbers will be included as well. Defaults to 1.
+
+        Returns:
+        tuple: A tuple containing two elements:
+            - List[float]: A list of summed monoisotopic masses, sorted in ascending order.
+            - List[tuple]: A list of tuples, where each tuple contains a combination of modification names
+                        corresponding to the summed monoisotopic masses.
+        """
+        # Remove duplicates from the modification DataFrame
+        modification_filtered_df = self.modification_df[
+            ["name", "monoisotopic_mass"]
+        ].drop_duplicates()
+        mass_dict = dict(
+            zip(modification_filtered_df["name"], modification_filtered_df["monoisotopic_mass"])
+        )
+
+        # Function to generate combinations
+        def generate_combinations(items, length):
+            if length == 0:
+                yield ()
+            elif length > 0:
+                for i in range(len(items)):
+                    for cc in generate_combinations(items[i:], length - 1):
+                        yield (items[i],) + cc
+
+        # Generate all unique combinations
+        all_modifications = []
+        all_masses = []
+        unique_combinations = set()
+
+        for r in range(1, combination_length + 1):
+            for combo in generate_combinations(sorted(modification_filtered_df["name"]), r):
+                if combo not in unique_combinations:
+                    unique_combinations.add(combo)
+                    all_modifications.append(combo)
+                    all_masses.append(sum(mass_dict[mod] for mod in combo))
+
+        # Sort the results by mass
+        combined = sorted(zip(all_masses, all_modifications))
+
+        if combined:
+            monoisotopic_masses, modifications = zip(*combined)
+            return list(monoisotopic_masses), list(modifications)
+        else:
+            return [], []
+
+    def _regenerate_and_save_cache(self, cache_file: str) -> None:
+        """Regenerate data and save it to the cache."""
+        logger.info("Generating cache data")
+        self.get_unimod_database()
+        self.monoisotopic_masses, self.modifications_names = (
+            self._generate_modifications_combinations_lists(self.combination_length)
+        )
+
+        with open(cache_file, "wb") as f:
+            pickle.dump(
+                {
+                    "metadata": (
+                        self.combination_length,
+                        self.exclude_mutations,
+                        self.modification_file,
+                    ),
+                    "modification_df": self.modification_df,
+                    "monoisotopic_masses": self.monoisotopic_masses,
+                    "modifications_names": self.modifications_names,
+                },
+                f,
+            )
+
+        # Update class variables
+        self.monoisotopic_masses = self.monoisotopic_masses
+        self.modifications_names = self.modifications_names
+        self.modification_df = self.modification_df
+
+    def _read_unimod_file(self, modification_file=None):
+        """
+        Read a list of modifications from a file.
+
+        Args:
+            modification_file (str, optional): Path to the modification file. Defaults to None.
+
+        Returns:
+            list: List of modifications
+        """
+
+        if modification_file:
+            df = pd.read_csv(modification_file, sep="\t")
+            req_columns = ["unimod_id", "name"]
+            for key in req_columns:
+                if key in df.columns:
+                    if "residue" in df.columns:
+                        grouped = df.groupby([key]).agg({"residue": list}).reset_index()
+                        return {row[key]: row["residue"] for _, row in grouped.iterrows()}, key
+                    else:
+                        return {row[key]: None for _, row in df.iterrows()}, key
+            raise ValueError("Modification file should contain 'id' or 'name' column")
+        else:
+            return None, None
+
+
+class JSONConfigLoader:
+    """Loads a single-level configuration from a JSON file."""
+
+    def __init__(self, config_file: str):
+        self.config = self._load_config(config_file)
+
+    def _load_config(self, config_file: str):
+        with open(config_file, "r") as f:
+            return json.load(f)
+
+    def get(self, key: str, default=None):
+        """Retrieve a configuration value."""
+        return self.config.get(key, default)

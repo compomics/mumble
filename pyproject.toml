@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mumble"
-version = "0.0.1"
+version = "0.1.2"
 description = "Finding the perfect modification for your mass shift"
 readme = "README.md"
 keywords = [
@@ -27,6 +27,7 @@ dependencies = [
     "pandas >= 1.5.0",
     "psm_utils >= 0.9.0",
     "tomli>=2; python_version < '3.11'",
+    "h5py>=3.0.0",
 ]
 requires-python = ">=3.9"
 
