@@ -3,8 +3,10 @@ import logging
 import itertools
 import os
 import json
-from collections import namedtuple
+import numpy as np
 from pathlib import Path
+from dataclasses import dataclass
+from itertools import product
 
 import pandas as pd
 import pickle
@@ -420,81 +422,21 @@ class _ModificationHandler:
         return:
             dict: Dictionary with name as key and mass and residue as value
         """
-        Modification = namedtuple("modification", ["mass", "residues", "restrictions"])
 
         return {
-            row.name: Modification(row.monoisotopic_mass, row.residue, row.restriction)
+            row.name: Modification(
+                name=row.name,
+                monoisotopic_mass=row.monoisotopic_mass,
+                residue=row.residue,
+                restriction=row.restriction,
+            )
             for row in self.modification_df.groupby(["monoisotopic_mass", "name"])
             .agg({"residue": list, "restriction": list})
             .reset_index()
             .itertuples()
-        }  # TODO: used named tuple here
+        }
 
-    def get_localisation(
-        self, psm, modification_name, residue_list, restrictions
-    ) -> set[namedtuple]:
-        """
-        Localise a given modification in a peptide
-
-        Args:
-            psm (psm_utils.PSM): PSM object
-            modification_name (str): Name of the modification
-            residue_list (list): List of residues
-            restrictions (list): List of restrictions
-
-            return:
-                list: List of localised_mass_shift
-        """
-        loc_list = []
-        Localised_mass_shift = namedtuple("Localised_mass_shift", ["loc", "modification"])
-
-        amino_acids_peptide = [x[0] for x in psm.peptidoform.parsed_sequence]
-
-        for residue, restriction in zip(residue_list, restrictions):
-            if (residue == "N-term") and (psm.peptidoform.properties["n_term"] is None):
-                loc_list.append(Localised_mass_shift("N-term", modification_name))
-
-            elif residue == "C-term" and (psm.peptidoform.properties["c_term"] is None):
-                loc_list.append(Localised_mass_shift("C-term", modification_name))
-
-            elif residue == "protein_level":
-                loc_list.extend(
-                    [
-                        Localised_mass_shift(loc, mod)
-                        for loc, mod in self.check_protein_level(psm, modification_name)
-                    ]
-                )
-            elif restriction == "N-term" or restriction == "C-term":
-                if (
-                    restriction == "N-term"
-                    and (psm.peptidoform.properties["n_term"] is None)
-                    and (psm.peptidoform.parsed_sequence[0][0] == residue)
-                ):
-                    loc_list.append(Localised_mass_shift("N-term", modification_name))
-
-                elif (
-                    restriction == "C-term"
-                    and (psm.peptidoform.properties["c_term"] is None)
-                    and (psm.peptidoform.parsed_sequence[-1][0] == residue)
-                ):
-                    loc_list.append(Localised_mass_shift("C-term", modification_name))
-
-                else:
-                    continue
-
-            elif residue in amino_acids_peptide:
-                loc_list.extend(
-                    [
-                        Localised_mass_shift(i, modification_name)
-                        for i, aa in enumerate(amino_acids_peptide)
-                        if (aa == residue) and (psm.peptidoform.parsed_sequence[i][1] is None)
-                    ]
-                )
-
-        # remove duplicate locations
-        return set(loc_list)
-
-    def localize_mass_shift(self, psm) -> list[namedtuple]:
+    def localize_mass_shift(self, psm):
         """Give potential localisations of a mass shift in a peptide
 
         Args:
@@ -504,87 +446,80 @@ class _ModificationHandler:
             list: List of Modification_candidate([localised_mass_shift])
         """
         expmass = mz_to_mass(psm.precursor_mz, psm.get_precursor_charge())
-        calcmass = calculate_mass(psm.peptidoform.composition)
+        calcmass = calculate_mass(
+            psm.peptidoform.composition
+        )  # TODO: use mass instead of composition
         mass_shift = expmass - calcmass
 
+        original_peptidoform = (
+            (["N-term"] if not psm.peptidoform.properties["n_term"] else [None])
+            + (["Protein_level"] if self.protein_level_check else [None])
+            + ([x[0] if not x[1] else None for x in psm.peptidoform.parsed_sequence])
+            + (["Protein_level"] if self.protein_level_check else [None])
+            + (["C-term"] if not psm.peptidoform.properties["c_term"] else [None])
+        )
+
         # get all potential modifications
-        try:
-            potential_modifications_indices = self._binary_range_search(
-                self.monoisotopic_masses, mass_shift, self.mass_error
-            )
-            if potential_modifications_indices:
-                potential_modifications_tuples = self.modifications_names[
-                    potential_modifications_indices[0] : potential_modifications_indices[1] + 1
-                ]
-            else:
-                return []
-        except KeyError:
-            return None
+        left_index, rigth_index = self._binary_range_search(
+            self.monoisotopic_masses, mass_shift, self.mass_error
+        )
+        canididate_mass_shifts = self.modifications_names[left_index : rigth_index + 1]
 
-        Modification_candidate = namedtuple("Modification_candidate", ["Localised_mass_shifts"])
+        for modifications in canididate_mass_shifts:
+            # Try localise all modifications for each mass shift candidate
+            peptidoform_candidates = []
+            for mod_name in modifications:
+                localised_mod = self.name_to_mass_residue_dict[mod_name].localise(
+                    original_peptidoform
+                )
+                if localised_mod[1] or localised_mod[-2]:
+                    localised_mod[1], localised_mod[-2] = self.check_protein_level(psm, mod_name)
+                peptidoform_candidates.append(localised_mod)
 
-        # cache to store results for combinations
-        combination_cache = {}
+            final_candidates = self._generate_combinations(peptidoform_candidates)
 
-        def check_combination(combination, psm):
-            if not combination:
-                return []
+        return final_candidates
 
-            if combination in combination_cache:
-                return combination_cache[combination]
+    @staticmethod
+    def generate_combinations(mod_lists):
+        """Give a list of lists of modifications, generate all possible combinations of modifications"""
+        mod_array = np.array(mod_lists, dtype=object)
 
-            if len(combination) == 1:
-                # Case: combination with no child combinations and not cached
-                mod_name = combination[0]
-                residues = self.name_to_mass_residue_dict[mod_name].residues
-                restrictions = self.name_to_mass_residue_dict[mod_name].restrictions
-                localizations = self.get_localisation(psm, mod_name, residues, restrictions)
-                # Store the results as a list of feasible modification candidates
-                result = [
-                    Modification_candidate(Localised_mass_shifts=[localization])
-                    for localization in localizations
-                ]
-                combination_cache[combination] = result
-                return result
+        # Use np.where to get indices of non-False values for each row
+        valid_indices = [
+            np.where(mod_array[i] != False)[0].tolist() for i in range(mod_array.shape[0])
+        ]
+        # generate all possible combinations of indices
+        valid_combinations = [
+            comb for comb in list(product(*valid_indices)) if len(set(comb)) == len(mod_lists)
+        ]
 
-            else:
-                # Case: combination with child combinations and not cached
-                # child_combinations = [combo for combo in itertools.product(*[[(mod,) for mod in combination]])]
-                child_combinations = itertools.product(combination)
+        candidates = []
+        # Generate the candidate modifications
+        for combination in valid_combinations:
+            candidate = [False] * len(mod_array[0])
+            for i, idx in enumerate(combination):
+                name = mod_array[i][idx]
+                if candidate[idx] == "[B]":
+                    candidate = False
+                    break
 
-                # Get possible mass shift combinations for each child
-                child_results = []
-                for child in child_combinations:
-                    child_results.append(check_combination(child, psm))
+                elif "[B]" in name:
+                    candidate[idx] = name.replace("[B]", "")
+                    # check that there are no other modifications on before this position
+                    if any(candidate[:idx]):
+                        break
+                    else:
+                        # block everything before this position
+                        candidate[:idx] = ["[B]"] * idx
+                else:
+                    candidate[idx] = name
+            if candidate:
+                # replace [B] with False
+                candidate = [False if x == "[B]" else x for x in candidate]
+                candidates.append(candidate)
 
-                # Combine child mass shift possibilities
-                combined_results = []
-                for child_result_list in itertools.product(*child_results):
-                    # Flatten the list of Localised_mass_shifts from all child results
-                    all_shifts = [
-                        shift
-                        for result in child_result_list
-                        for shift in result.Localised_mass_shifts
-                    ]
-
-                    # Check for position conflicts
-                    positions = [shift.loc for shift in all_shifts]
-                    if len(set(positions)) == len(positions):  # No overlap in positions
-                        combined_results.append(
-                            Modification_candidate(Localised_mass_shifts=all_shifts)
-                        )
-
-                combination_cache[combination] = combined_results
-                return combined_results
-
-        feasible_modifications_candidates = []
-        for potential_mods_combination in potential_modifications_tuples:
-            # check every combination recursively
-            feasible_modifications_candidates.extend(
-                check_combination(potential_mods_combination, psm)
-            )
-
-        return feasible_modifications_candidates if feasible_modifications_candidates else None
+        return candidates
 
     @staticmethod
     def _binary_range_search(arr, target, error) -> tuple[int, int]:
@@ -638,7 +573,7 @@ class _ModificationHandler:
         # Check bounds and validity
         if left <= right and left < len(arr) and right >= 0:
             return (left, right)
-        return ()
+        return (0, 0)
 
     def _get_aa_sub_dict(self):
         """
@@ -705,7 +640,6 @@ class _ModificationHandler:
 
         if psm.is_decoy:
             return []
-        found_additional_amino_acids = []
 
         protein_sequence = self.fasta_file[psm.protein_list[0]].sequence
         peptide_start_position = protein_sequence.find(psm.peptidoform.sequence)
@@ -716,15 +650,19 @@ class _ModificationHandler:
             protein_sequence[peptide_start_position - additional_aa_len : peptide_start_position]
             == additional_aa
         ):
-            found_additional_amino_acids.append(("prepeptide", additional_aa))
+            prepeptide = additional_aa
+        else:
+            prepeptide = False
 
         if (
             protein_sequence[peptide_end_position : peptide_end_position + additional_aa_len]
             == additional_aa
         ):
-            found_additional_amino_acids.append(("postpeptide", additional_aa))
+            postpeptide = additional_aa
+        else:
+            postpeptide = False
 
-        return found_additional_amino_acids
+        return prepeptide, postpeptide
 
 
 class ModificationCache:
@@ -982,6 +920,69 @@ class ModificationCache:
             raise ValueError("Modification file should contain 'id' or 'name' column")
         else:
             return None, None
+
+
+@dataclass
+class Modification:
+    name: str
+    monoisotopic_mass: float
+    residues: np.ndarray
+    restrictions: np.ndarray
+
+    def __post_init__(self):
+        assert len(self.residues) == len(
+            self.restrictions
+        ), "Residues and restrictions should have the same length"
+
+    def localise(self, original_peptidoform_list):
+        """
+        Localise the modification in a peptide based on residues and restrictions.
+
+        Args:
+            original_peptidoform_list (np.ndarray): Array of the original peptidoform.
+
+        Returns:
+            np.ndarray: Array with modifcation name, [B]Modification name or False for each element.
+        """
+        # Initialize result array with "False"
+        result = np.full(original_peptidoform_list.shape, False, dtype=object)
+
+        # Precompute positions
+        n_term_positions = np.array([0, 2])
+        c_term_positions = np.array(
+            [len(original_peptidoform_list) - 1, len(original_peptidoform_list) - 3]
+        )
+
+        for residue, restriction in zip(self.residues, self.restrictions):
+            # Find matches
+            matches = original_peptidoform_list == residue
+
+            if restriction == "Anywhere":
+                result[matches] = self.name
+
+            elif restriction == "N-term":
+                # Handle N-term restrictions
+                n_term_indices = np.intersect1d(np.where(matches)[0], n_term_positions)
+                result[n_term_indices] = "[B]" + self.name
+                result[np.where(matches)[0][~np.isin(np.where(matches)[0], n_term_positions)]] = (
+                    False
+                )
+                result[np.where(matches)[0][np.isin(np.where(matches)[0], [0])]] = self.name
+
+            elif restriction == "C-term":
+                # Handle C-term restrictions
+                c_term_indices = np.intersect1d(np.where(matches)[0], c_term_positions)
+                result[c_term_indices] = "[B]" + self.name
+                result[np.where(matches)[0][~np.isin(np.where(matches)[0], c_term_positions)]] = (
+                    False
+                )
+                result[
+                    np.where(matches)[0][
+                        np.isin(np.where(matches)[0], [len(original_peptidoform_list) - 1])
+                    ]
+                ] = self.name
+
+        return result
 
 
 class JSONConfigLoader:
