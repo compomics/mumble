@@ -118,9 +118,7 @@ class PSMHandler:
 
         return locations
 
-    def _return_mass_shifted_peptidoform(
-        self, modification_tuple_list, peptidoform
-    ) -> Peptidoform:
+    def _return_mass_shifted_psms(self, modification_lists, psm) -> Peptidoform:
         """
         Apply a list of modification tuples to a peptidoform.
 
@@ -131,75 +129,43 @@ class PSMHandler:
         Returns:
             list of psm_utils.Peptidoform: List of new peptidoform objects with applied modifications, or None if conflicting modifications exist.
         """
+        mass_shifted_psms = []
 
-        new_peptidoforms = []
-        new_peptidoform = deepcopy(peptidoform)
+        for assigned_modifications in modification_lists:
 
-        existing_mod_locations = self._find_mod_locations(new_peptidoform)
+            mass_shifted_psm = deepcopy(psm)
+            new_peptidoform = mass_shifted_psm.peptidoform  # TODO check if link is broken
 
-        for modification_tuple in modification_tuple_list:
+            # handle terminal modifications
+            new_peptidoform.properties["n_term"] = assigned_modifications[0]
+            new_peptidoform.properties["c_term"] = assigned_modifications[-1]
 
-            new_peptidoform = deepcopy(peptidoform)
-            for localised_mass_shift in modification_tuple.Localised_mass_shifts:
-                loc, mod = localised_mass_shift
-                if loc in existing_mod_locations:
-                    return None
+            # handle peptide modifications
+            for i, mod in enumerate(assigned_modifications[2:-2]):
+                if mod in self.modification_handler.aa_sub_dict.keys():
+                    new_peptidoform.parsed_sequence[i] = (
+                        self.modification_handler.aa_sub_dict[mod][1],
+                        None,
+                    )
                 else:
-                    if loc == "N-term":
-                        new_peptidoform.properties["n_term"] = [proforma.process_tag_tokens(mod)]
-                    elif loc == "C-term":
-                        new_peptidoform.properties["c_term"] = [proforma.process_tag_tokens(mod)]
-                    elif loc == "prepeptide":
-                        new_peptidoform.parsed_sequence = [
-                            (aa, None) for aa in mod
-                        ] + new_peptidoform.parsed_sequence
+                    new_peptidoform.parsed_sequence[i] = (
+                        new_peptidoform.parsed_sequence[i][0],
+                        mod,
+                    )
 
-                    elif loc == "postpeptide":
-                        new_peptidoform.parsed_sequence = new_peptidoform.parsed_sequence + [
-                            (aa, None) for aa in mod
-                        ]
-                    else:
-                        try:
-                            aa = new_peptidoform.parsed_sequence[loc][0]
-                        except IndexError:
-                            logger.warning(f"IndexError for {peptidoform} at {loc} with {mod}")
-                            raise IndexError("Localisation is not in peptide")
+            # handle peptide additions
+            if additional_aa := assigned_modifications[1]:
+                new_peptidoform.parsed_sequence = [
+                    (aa, None) for aa in additional_aa
+                ] + new_peptidoform.parsed_sequence
+            if additional_aa := assigned_modifications[-2]:
+                new_peptidoform.parsed_sequence = new_peptidoform.parsed_sequence + [
+                    (aa, None) for aa in additional_aa
+                ]
 
-                        # If the modification is an amino acid substitution
-                        if mod in self.modification_handler.aa_sub_dict.keys():
-                            if (
-                                aa == self.modification_handler.aa_sub_dict[mod][0]
-                            ):  # TODO named tuple so indexing is not necesary and more clear
-                                new_peptidoform.parsed_sequence[loc] = (
-                                    self.modification_handler.aa_sub_dict[mod][1],
-                                    None,
-                                )
-                        # If the modification is a standard modification
-                        else:
-                            new_peptidoform.parsed_sequence[loc] = (
-                                aa,
-                                [proforma.process_tag_tokens(mod)],
-                            )
-            new_peptidoforms.append(new_peptidoform)
-        return new_peptidoforms
+            mass_shifted_psms.append(mass_shifted_psm)
 
-    @staticmethod
-    def _create_new_psm(psm, new_peptidoform) -> PSM:
-        """
-        Create new psm with new peptidoform.
-
-        Args:
-            psm (psm_utils.PSM): PSM object
-            new_peptidoform (psm_utils.Peptidoform): Peptidoform object
-
-        return:
-            psm_utils.PSM: PSM object
-        """
-        if new_peptidoform is None:
-            return
-        copy_psm = deepcopy(psm)
-        copy_psm.peptidoform = new_peptidoform
-        return copy_psm
+        return mass_shifted_psms
 
     def _get_modified_peptidoforms(self, psm, keep_original=False) -> list:
         """
@@ -218,19 +184,11 @@ class PSMHandler:
             psm["metadata"]["original_psm"] = True
             modified_peptidoforms.append(psm)
 
-        modification_tuple_list = self.modification_handler.localize_mass_shift(psm)
-        if modification_tuple_list:
-            new_proteoforms_list = self._return_mass_shifted_peptidoform(
-                modification_tuple_list, psm.peptidoform
+        localised_mass_shifts = self.modification_handler._localize_mass_shift(psm)
+        if localised_mass_shifts:
+            modified_peptidoforms.append(
+                self._return_mass_shifted_psms(localised_mass_shifts, psm)
             )
-            for new_proteoform in new_proteoforms_list:
-                new_psm = self._create_new_psm(
-                    psm,
-                    new_proteoform,
-                )
-                if new_psm is not None:
-                    new_psm["metadata"]["original_psm"] = False
-                    modified_peptidoforms.append(new_psm)
 
         return modified_peptidoforms
 
@@ -291,7 +249,7 @@ class PSMHandler:
 
         for psm in track(
             parsed_psm_list,
-            description="Parsing PSMs in PSMList...",
+            description="Matching modifications to your mass shifts ... ",
             total=len(parsed_psm_list),
         ):
             if (psm.is_decoy) & (not generate_modified_decoys):
@@ -328,7 +286,7 @@ class PSMHandler:
         elif type(psm_list) is str:
             self.psm_file_name = Path(psm_list)
             psm_list = read_file(psm_list, filetype=psm_file_type)
-            psm_list.rename_modifications({"+15.9949": "Oxidation"})
+            psm_list.rename_modifications(modification_mapping)
         elif type(psm_list) is not PSMList:
             raise TypeError("psm_list should be a path to a file or a PSMList object")
 
@@ -427,8 +385,8 @@ class _ModificationHandler:
             row.name: Modification(
                 name=row.name,
                 monoisotopic_mass=row.monoisotopic_mass,
-                residue=row.residue,
-                restriction=row.restriction,
+                residues=row.residue,
+                restrictions=row.restriction,
             )
             for row in self.modification_df.groupby(["monoisotopic_mass", "name"])
             .agg({"residue": list, "restriction": list})
@@ -436,7 +394,7 @@ class _ModificationHandler:
             .itertuples()
         }
 
-    def localize_mass_shift(self, psm):
+    def _localize_mass_shift(self, psm):
         """Give potential localisations of a mass shift in a peptide
 
         Args:
@@ -451,7 +409,7 @@ class _ModificationHandler:
         )  # TODO: use mass instead of composition
         mass_shift = expmass - calcmass
 
-        original_peptidoform = (
+        peptidofrom_as_list = (
             (["N-term"] if not psm.peptidoform.properties["n_term"] else [None])
             + (["Protein_level"] if self.protein_level_check else [None])
             + ([x[0] if not x[1] else None for x in psm.peptidoform.parsed_sequence])
@@ -470,7 +428,7 @@ class _ModificationHandler:
             peptidoform_candidates = []
             for mod_name in modifications:
                 localised_mod = self.name_to_mass_residue_dict[mod_name].localise(
-                    original_peptidoform
+                    peptidofrom_as_list
                 )
                 if localised_mod[1] or localised_mod[-2]:
                     localised_mod[1], localised_mod[-2] = self.check_protein_level(psm, mod_name)
@@ -481,8 +439,8 @@ class _ModificationHandler:
         return final_candidates
 
     @staticmethod
-    def generate_combinations(mod_lists):
-        """Give a list of lists of modifications, generate all possible combinations of modifications"""
+    def _generate_combinations(mod_lists):
+        """Give a list of lists of single modification placements, generate all potential combinations"""
         mod_array = np.array(mod_lists, dtype=object)
 
         # Use np.where to get indices of non-False values for each row
@@ -497,7 +455,7 @@ class _ModificationHandler:
         candidates = []
         # Generate the candidate modifications
         for combination in valid_combinations:
-            candidate = [False] * len(mod_array[0])
+            candidate = [None] * len(mod_array[0])
             for i, idx in enumerate(combination):
                 name = mod_array[i][idx]
                 if candidate[idx] == "[B]":
@@ -508,6 +466,7 @@ class _ModificationHandler:
                     candidate[idx] = name.replace("[B]", "")
                     # check that there are no other modifications on before this position
                     if any(candidate[:idx]):
+                        candidate = False
                         break
                     else:
                         # block everything before this position
@@ -515,8 +474,8 @@ class _ModificationHandler:
                 else:
                     candidate[idx] = name
             if candidate:
-                # replace [B] with False
-                candidate = [False if x == "[B]" else x for x in candidate]
+                # replace [B] with None
+                candidate = [None if x == "[B]" else x for x in candidate]
                 candidates.append(candidate)
 
         return candidates
@@ -934,28 +893,28 @@ class Modification:
             self.restrictions
         ), "Residues and restrictions should have the same length"
 
-    def localise(self, original_peptidoform_list):
+    def localise(self, peptidoform_as_list):
         """
         Localise the modification in a peptide based on residues and restrictions.
 
         Args:
-            original_peptidoform_list (np.ndarray): Array of the original peptidoform.
+            peptidoform_as_list (np.ndarray): Array of the original peptidoform.
 
         Returns:
             np.ndarray: Array with modifcation name, [B]Modification name or False for each element.
         """
-        # Initialize result array with "False"
-        result = np.full(original_peptidoform_list.shape, False, dtype=object)
+        # convert to array
+        peptidoform_as_list = np.array(peptidoform_as_list)
+        # Initialize result array with False
+        result = np.full(peptidoform_as_list.shape, False, dtype=object)
 
         # Precompute positions
         n_term_positions = np.array([0, 2])
-        c_term_positions = np.array(
-            [len(original_peptidoform_list) - 1, len(original_peptidoform_list) - 3]
-        )
+        c_term_positions = np.array([len(peptidoform_as_list) - 1, len(peptidoform_as_list) - 3])
 
         for residue, restriction in zip(self.residues, self.restrictions):
             # Find matches
-            matches = original_peptidoform_list == residue
+            matches = peptidoform_as_list == residue
 
             if restriction == "Anywhere":
                 result[matches] = self.name
@@ -978,7 +937,7 @@ class Modification:
                 )
                 result[
                     np.where(matches)[0][
-                        np.isin(np.where(matches)[0], [len(original_peptidoform_list) - 1])
+                        np.isin(np.where(matches)[0], [len(peptidoform_as_list) - 1])
                     ]
                 ] = self.name
 
