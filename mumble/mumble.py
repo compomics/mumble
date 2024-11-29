@@ -93,31 +93,6 @@ class PSMHandler:
 
         return params
 
-    @staticmethod
-    def _find_mod_locations(peptidoform):
-        """
-        Find the locations of existing modifications in a peptide.
-
-        Args:
-            peptidoform (psm_utils.Peptidoform): Peptidoform object
-
-        return:
-            list: List of locations of existing modifications
-        """
-        locations = []
-
-        if peptidoform.properties["n_term"] is not None:
-            locations.append("N-term")
-
-        if peptidoform.properties["c_term"] is not None:
-            locations.append("C-term")
-
-        for i, aa in enumerate(peptidoform.parsed_sequence):
-            if aa[1] is not None:
-                locations.append(i)
-
-        return locations
-
     def _return_mass_shifted_psms(self, modification_lists, psm) -> Peptidoform:
         """
         Apply a list of modification tuples to a peptidoform.
@@ -137,8 +112,10 @@ class PSMHandler:
             new_peptidoform = mass_shifted_psm.peptidoform  # TODO check if link is broken
 
             # handle terminal modifications
-            new_peptidoform.properties["n_term"] = assigned_modifications[0]
-            new_peptidoform.properties["c_term"] = assigned_modifications[-1]
+            if nterm := assigned_modifications[0]:
+                new_peptidoform.properties["n_term"] = [proforma.process_tag_tokens(nterm)]
+            if cterm := assigned_modifications[-1]:
+                new_peptidoform.properties["c_term"] = [proforma.process_tag_tokens(cterm)]
 
             # handle peptide modifications
             for i, mod in enumerate(assigned_modifications[2:-2]):
@@ -147,10 +124,10 @@ class PSMHandler:
                         self.modification_handler.aa_sub_dict[mod][1],
                         None,
                     )
-                else:
+                elif mod:
                     new_peptidoform.parsed_sequence[i] = (
                         new_peptidoform.parsed_sequence[i][0],
-                        mod,
+                        [proforma.process_tag_tokens(mod)],
                     )
 
             # handle peptide additions
@@ -418,11 +395,15 @@ class _ModificationHandler:
         )
 
         # get all potential modifications
-        left_index, rigth_index = self._binary_range_search(
+        search_indices = self._binary_range_search(
             self.monoisotopic_masses, mass_shift, self.mass_error
         )
-        canididate_mass_shifts = self.modifications_names[left_index : rigth_index + 1]
-
+        if not search_indices:
+            return []
+        canididate_mass_shifts = self.modifications_names[
+            search_indices[0] : search_indices[1] + 1
+        ]
+        psm_modifications = []
         for modifications in canididate_mass_shifts:
             # Try localise all modifications for each mass shift candidate
             peptidoform_candidates = []
@@ -432,11 +413,16 @@ class _ModificationHandler:
                 )
                 if localised_mod[1] or localised_mod[-2]:
                     localised_mod[1], localised_mod[-2] = self.check_protein_level(psm, mod_name)
+
+                if not localised_mod.any():
+                    break
+
                 peptidoform_candidates.append(localised_mod)
+            if peptidoform_candidates:
+                final_candidates = self._generate_combinations(peptidoform_candidates)
+                psm_modifications.extend(final_candidates)
 
-            final_candidates = self._generate_combinations(peptidoform_candidates)
-
-        return final_candidates
+        return psm_modifications
 
     @staticmethod
     def _generate_combinations(mod_lists):
@@ -532,7 +518,7 @@ class _ModificationHandler:
         # Check bounds and validity
         if left <= right and left < len(arr) and right >= 0:
             return (left, right)
-        return (0, 0)
+        return None
 
     def _get_aa_sub_dict(self):
         """
@@ -665,7 +651,7 @@ class ModificationCache:
         # Create the cache directory if it doesn't exist
         os.makedirs(cache_dir, exist_ok=True)
 
-        cache_file = os.path.join(cache_dir, "modification_cache.h5")
+        cache_file = os.path.join(cache_dir, "modification_cache.pkl")
         return cache_file
 
     def _load_or_generate_data(self, cache_file: str) -> None:
@@ -730,7 +716,7 @@ class ModificationCache:
             monoisotopic_mass = mod.monoisotopic_mass
 
             for specificity in mod.specificities:
-                classification = specificity.classification
+                classification = specificity.classification.classification
 
                 # Skip based on classification
                 if classification == "Isotopic label":
@@ -916,7 +902,7 @@ class Modification:
             # Find matches
             matches = peptidoform_as_list == residue
 
-            if restriction == "Anywhere":
+            if restriction == "anywhere":
                 result[matches] = self.name
 
             elif restriction == "N-term":
