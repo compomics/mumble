@@ -163,7 +163,7 @@ class PSMHandler:
 
         localised_mass_shifts = self.modification_handler._localize_mass_shift(psm)
         if localised_mass_shifts:
-            modified_peptidoforms.append(
+            modified_peptidoforms.extend(
                 self._return_mass_shifted_psms(localised_mass_shifts, psm)
             )
 
@@ -381,9 +381,7 @@ class _ModificationHandler:
             list: List of Modification_candidate([localised_mass_shift])
         """
         expmass = mz_to_mass(psm.precursor_mz, psm.get_precursor_charge())
-        calcmass = calculate_mass(
-            psm.peptidoform.composition
-        )  # TODO: use mass instead of composition
+        calcmass = psm.peptidoform.theoretical_mass
         mass_shift = expmass - calcmass
 
         peptidofrom_as_list = (
