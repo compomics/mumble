@@ -1,4 +1,5 @@
 import click
+import cProfile
 
 from mumble import PSMHandler
 
@@ -75,7 +76,25 @@ CLI_OPTIONS = {
         "help": "Path to a config file",
         "default": None,
     },
+    "profile": {
+        "is_flag": True,
+        "help": "Profile the code with cProfile",
+        "default": False,
+        "show_default": True,
+    },
 }
+
+
+def profile(fnc, filepath):
+    """A decorator that uses cProfile to profile a function"""
+
+    def inner(*args, **kwargs):
+        with cProfile.Profile() as profiler:
+            return_value = fnc(*args, **kwargs)
+        profiler.dump_stats(filepath + ".profile.prof")
+        return return_value
+
+    return inner
 
 
 @click.command("cli", context_settings={"show_default": True})
@@ -92,6 +111,11 @@ def main(**kwargs):
         for key, value in kwargs.items()
         if ctx.get_parameter_source(key) == click.core.ParameterSource.COMMANDLINE
     }
+    if kwargs["profile"]:
+        pr = cProfile.Profile()
+        pr.enable()
+    else:
+        pr = None
 
     # Initialize PSMHandler with priority for CLI params
     psm_handler = PSMHandler(
@@ -99,6 +123,9 @@ def main(**kwargs):
         **cli_params,
     )
     modified_psm_list = psm_handler.add_modified_psms(kwargs["input_file"])
+    if pr:
+        pr.disable()
+        pr.dump_stats(kwargs["input_file"] + ".profile.prof")
 
     psm_handler.write_modified_psm_list(modified_psm_list)
 

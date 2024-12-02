@@ -7,6 +7,10 @@ import numpy as np
 from pathlib import Path
 from dataclasses import dataclass
 from itertools import product
+from functools import lru_cache
+import concurrent.futures
+from functools import partial
+
 
 import pandas as pd
 import pickle
@@ -18,6 +22,7 @@ from pyteomics.mass import std_aa_mass, calculate_mass, unimod
 from pyteomics.fasta import IndexedFASTA
 from rich.progress import track
 from rich.logging import RichHandler
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
 
 # setup logging
 logging.basicConfig(
@@ -61,7 +66,7 @@ class PSMHandler:
         Load configuration parameters from the JSON file and apply overrides.
 
         Args:
-            overrides (dict): Dictionary of parameters to override.
+            overrides (dict): Dictionary of parameters _getto override.
 
         Returns:
             dict: Consolidated configuration parameters.
@@ -93,82 +98,6 @@ class PSMHandler:
 
         return params
 
-    def _return_mass_shifted_psms(self, modification_lists, psm) -> Peptidoform:
-        """
-        Apply a list of modification tuples to a peptidoform.
-
-        Args:
-            modification_tuple_list (list of tuples): List of modification tuples containing local mass shifts.
-            peptidoform (psm_utils.Peptidoform): Original peptidoform object to modify.
-
-        Returns:
-            list of psm_utils.Peptidoform: List of new peptidoform objects with applied modifications, or None if conflicting modifications exist.
-        """
-        mass_shifted_psms = []
-
-        for assigned_modifications in modification_lists:
-
-            mass_shifted_psm = deepcopy(psm)
-            new_peptidoform = mass_shifted_psm.peptidoform  # TODO check if link is broken
-
-            # handle terminal modifications
-            if nterm := assigned_modifications[0]:
-                new_peptidoform.properties["n_term"] = [proforma.process_tag_tokens(nterm)]
-            if cterm := assigned_modifications[-1]:
-                new_peptidoform.properties["c_term"] = [proforma.process_tag_tokens(cterm)]
-
-            # handle peptide modifications
-            for i, mod in enumerate(assigned_modifications[2:-2]):
-                if mod in self.modification_handler.aa_sub_dict.keys():
-                    new_peptidoform.parsed_sequence[i] = (
-                        self.modification_handler.aa_sub_dict[mod][1],
-                        None,
-                    )
-                elif mod:
-                    new_peptidoform.parsed_sequence[i] = (
-                        new_peptidoform.parsed_sequence[i][0],
-                        [proforma.process_tag_tokens(mod)],
-                    )
-
-            # handle peptide additions
-            if additional_aa := assigned_modifications[1]:
-                new_peptidoform.parsed_sequence = [
-                    (aa, None) for aa in additional_aa
-                ] + new_peptidoform.parsed_sequence
-            if additional_aa := assigned_modifications[-2]:
-                new_peptidoform.parsed_sequence = new_peptidoform.parsed_sequence + [
-                    (aa, None) for aa in additional_aa
-                ]
-
-            mass_shifted_psms.append(mass_shifted_psm)
-
-        return mass_shifted_psms
-
-    def _get_modified_peptidoforms(self, psm, keep_original=False) -> list:
-        """
-        Get modified peptidoforms derived from a single PSM.
-
-        Args:
-            psm (psm_utils.PSM): Original PSM object.
-            keep_original (bool, optional): Whether to keep the original PSM alongside modified ones. Defaults to False.
-
-        Returns:
-            list: List of modified PSMs, or None if no modifications were applied.
-        """
-        modified_peptidoforms = []
-
-        if keep_original:
-            psm["metadata"]["original_psm"] = True
-            modified_peptidoforms.append(psm)
-
-        localised_mass_shifts = self.modification_handler._localize_mass_shift(psm)
-        if localised_mass_shifts:
-            modified_peptidoforms.extend(
-                self._return_mass_shifted_psms(localised_mass_shifts, psm)
-            )
-
-        return modified_peptidoforms
-
     def get_modified_peptidoforms_list(self, psm, keep_original=False) -> PSMList:
         """
         Get modified peptidoforms derived from 1 PSM in a PSMList.
@@ -180,7 +109,10 @@ class PSMHandler:
         return:
             psm_utils.PSMList: PSMList object
         """
-        modified_peptidoforms = self._get_modified_peptidoforms(psm, keep_original=keep_original)
+        modified_peptidoforms = self.modification_handler._get_modified_peptidoforms(
+            psm, keep_original=keep_original, generate_modified_decoys=False
+        )
+
         return PSMList(psm_list=modified_peptidoforms)
 
     def add_modified_psms(
@@ -207,36 +139,65 @@ class PSMHandler:
                 pass
             else:
                 raise ValueError("No PSM list provided")
-        if not generate_modified_decoys:
+        if generate_modified_decoys is None:
             generate_modified_decoys = self.params["generate_modified_decoys"]
-        if not keep_original:
+        if keep_original is None:
             keep_original = self.params["keep_original"]
         if not psm_file_type:
             psm_file_type = self.params["psm_file_type"]
 
         logger.info(
-            f"Adding modified PSMs to PSMlist {'WITH' if keep_original else 'WITHOUT'} originals, {'INCLUDING' if generate_modified_decoys else 'EXCLUDING'} modfied decoys"
+            f"Adding modified PSMs to PSMlist {'WITH' if keep_original else 'WITHOUT'} originals, {'INCLUDING' if generate_modified_decoys else 'EXCLUDING'} modified decoys"
         )
 
         parsed_psm_list = self._parse_psm_list(
             psm_list, psm_file_type, self.params["modification_mapping"]
         )
         new_psm_list = []
-        num_added_psms = 0
+        total_num_added_psms = 0
 
-        for psm in track(
-            parsed_psm_list,
-            description="Matching modifications to your mass shifts ... ",
-            total=len(parsed_psm_list),
-        ):
-            if (psm.is_decoy) & (not generate_modified_decoys):
-                continue
-            new_psms = self._get_modified_peptidoforms(psm, keep_original=keep_original)
-            if new_psms:
-                num_added_psms += len(new_psms) if not keep_original else len(new_psms) - 1
-                new_psm_list.extend(new_psms)
-        if num_added_psms != 0:
-            logger.info(f"Added {num_added_psms} additional modified PSMs")
+        # Define a partial function with fixed parameters
+        process_func = partial(
+            process_single_psm,
+            modification_handler=self.modification_handler,
+            keep_original=keep_original,
+            generate_modified_decoys=generate_modified_decoys,
+        )
+
+        # Setup the progress bar with enhanced columns
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total} PSMs processed"),
+            TimeElapsedColumn(),
+            transient=False,
+        ) as progress:
+            task = progress.add_task("Processing PSMs...", total=len(parsed_psm_list))
+
+            # Use ThreadPoolExecutor to avoid pickling issues
+            with concurrent.futures.ThreadPoolExecutor() as executor:
+                # Submit all tasks to the executor
+                futures = {executor.submit(process_func, psm): psm for psm in parsed_psm_list}
+
+                for future in concurrent.futures.as_completed(futures):
+                    try:
+                        modified_psms = future.result()
+                        if modified_psms:
+                            if keep_original:
+                                # Assuming the first PSM is the original
+                                total_num_added_psms += len(modified_psms) - 1
+                            else:
+                                total_num_added_psms += len(modified_psms)
+                            new_psm_list.extend(modified_psms)
+                    except Exception as e:
+                        psm = futures[future]
+                        logger.error(f"Error processing PSM {psm}: {e}")
+                    finally:
+                        progress.advance(task)
+
+        if total_num_added_psms != 0:
+            logger.info(f"Added {total_num_added_psms} additional modified PSMs")
         else:
             logger.warning("No modified PSMs found, ensure open modification search was enabled")
 
@@ -297,6 +258,35 @@ class PSMHandler:
 
         logger.info(f"Writing modified PSM list to {output_file}")
         write_file(psm_list=psm_list, filename=output_file, filetype=psm_file_type)
+
+
+def process_single_psm(psm, modification_handler, keep_original, generate_modified_decoys):
+    """
+    Processes a single PSM to generate modified PSMs.
+
+    Args:
+        psm (psm_utils.PSM): The original PSM object.
+        modification_handler (_ModificationHandler): Instance handling modifications.
+        keep_original (bool): Whether to keep the original PSM.
+        generate_modified_decoys (bool): Whether to generate decoys.
+
+    Returns:
+        list: List of modified PSMs.
+    """
+    # Add logging to confirm the function is being called
+
+    if psm.is_decoy and not generate_modified_decoys:
+        return []
+
+    try:
+        modified_peptidoforms = modification_handler._get_modified_peptidoforms(
+            psm, keep_original=keep_original
+        )
+        logger.debug(f"Generated {len(modified_peptidoforms)} modified PSMs for {psm}")
+        return modified_peptidoforms
+    except Exception as e:
+        logger.error(f"Exception in processing PSM {psm}: {e}")
+        return []
 
 
 class _ModificationHandler:
@@ -569,6 +559,61 @@ class _ModificationHandler:
             ]
         )
 
+    def _get_modified_peptidoforms(self, psm, keep_original=False) -> list:
+        modified_peptidoforms = []
+
+        if keep_original:
+            psm["metadata"]["original_psm"] = True
+            modified_peptidoforms.append(psm)
+
+        localised_mass_shifts = self._localize_mass_shift(psm)
+        if localised_mass_shifts:
+            modified_peptidoforms.extend(
+                self._return_mass_shifted_psms(localised_mass_shifts, psm)
+            )
+
+        return modified_peptidoforms
+
+    def _return_mass_shifted_psms(self, modification_lists, psm) -> list:
+        mass_shifted_psms = []
+
+        for assigned_modifications in modification_lists:
+            mass_shifted_psm = deepcopy(psm)
+            new_peptidoform = mass_shifted_psm.peptidoform
+
+            # Handle terminal modifications
+            if nterm := assigned_modifications[0]:
+                new_peptidoform.properties["n_term"] = [self.cached_process_tag_tokens(nterm)]
+            if cterm := assigned_modifications[-1]:
+                new_peptidoform.properties["c_term"] = [self.cached_process_tag_tokens(cterm)]
+
+            # Handle peptide modifications
+            for i, mod in enumerate(assigned_modifications[2:-2]):
+                if mod in self.aa_sub_dict.keys():
+                    new_peptidoform.parsed_sequence[i] = (
+                        self.aa_sub_dict[mod][1],
+                        None,
+                    )
+                elif mod:
+                    new_peptidoform.parsed_sequence[i] = (
+                        new_peptidoform.parsed_sequence[i][0],
+                        [self.cached_process_tag_tokens(mod)],
+                    )
+
+            # Handle peptide additions
+            if additional_aa := assigned_modifications[1]:
+                new_peptidoform.parsed_sequence = [
+                    (aa, None) for aa in additional_aa
+                ] + new_peptidoform.parsed_sequence
+            if additional_aa := assigned_modifications[-2]:
+                new_peptidoform.parsed_sequence = new_peptidoform.parsed_sequence + [
+                    (aa, None) for aa in additional_aa
+                ]
+
+            mass_shifted_psms.append(mass_shifted_psm)
+
+        return mass_shifted_psms
+
     def check_protein_level(self, psm, additional_aa):
         """
         Check if amino acid(s) precedes or follows a peptide in the protein sequence.
@@ -606,6 +651,19 @@ class _ModificationHandler:
             postpeptide = False
 
         return prepeptide, postpeptide
+
+    @lru_cache(maxsize=None)
+    def cached_process_tag_tokens(self, tag):
+        """
+        Process a tag token and cache the result.
+
+        Args:
+            tag (str): Tag token to process.
+
+        Returns:
+            str: Processed tag token.
+        """
+        return proforma.process_tag_tokens(tag)
 
 
 class ModificationCache:
