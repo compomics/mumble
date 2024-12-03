@@ -795,7 +795,7 @@ class TestModificationHandler:
             # no need to check single mod 'combinations'
             try:
                 mass_shift2 = candidate.Localised_mass_shifts[1]
-            except:
+            except:  # noqa: E722
                 continue
 
             sum = (
