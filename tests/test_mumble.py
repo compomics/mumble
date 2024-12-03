@@ -1,8 +1,7 @@
 import os
-import pickle
-from unittest import mock
+
 import pytest
-from unittest.mock import MagicMock, patch, mock_open
+from unittest.mock import MagicMock
 import pandas as pd
 from collections import namedtuple
 from psm_utils import PSMList, PSM, Peptidoform
