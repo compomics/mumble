@@ -5,6 +5,7 @@ import os
 import json
 from collections import namedtuple
 from pathlib import Path
+from functools import lru_cache
 
 import pandas as pd
 import pickle
@@ -12,21 +13,12 @@ from psm_utils.io import read_file, write_file
 from psm_utils import PSMList, PSM, Peptidoform
 from psm_utils.utils import mz_to_mass
 from pyteomics import proforma
-from pyteomics.mass import std_aa_mass, calculate_mass, unimod
+from pyteomics.mass import std_aa_mass, unimod
 from pyteomics.fasta import IndexedFASTA
-from rich.progress import track
-from rich.logging import RichHandler
-
-# setup logging
-logging.basicConfig(
-    level=logging.INFO,  # Set the logging level
-    format="%(message)s",  # Simple format for logging
-    datefmt="[%X]",  # Time format
-    handlers=[RichHandler(rich_tracebacks=True, show_path=False)],
-)
+from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
 
 # Add a logger
-logger = logging.getLogger("rich")
+logger = logging.getLogger(__name__)
 
 
 class PSMHandler:
@@ -144,9 +136,13 @@ class PSMHandler:
                     return None
                 else:
                     if loc == "N-term":
-                        new_peptidoform.properties["n_term"] = [proforma.process_tag_tokens(mod)]
+                        new_peptidoform.properties["n_term"] = [
+                            self.cached_process_tag_tokens(mod)
+                        ]
                     elif loc == "C-term":
-                        new_peptidoform.properties["c_term"] = [proforma.process_tag_tokens(mod)]
+                        new_peptidoform.properties["c_term"] = [
+                            self.cached_process_tag_tokens(mod)
+                        ]
                     elif loc == "prepeptide":
                         new_peptidoform.parsed_sequence = [
                             (aa, None) for aa in mod
@@ -176,7 +172,7 @@ class PSMHandler:
                         else:
                             new_peptidoform.parsed_sequence[loc] = (
                                 aa,
-                                [proforma.process_tag_tokens(mod)],
+                                [self.cached_process_tag_tokens(mod)],
                             )
             new_peptidoforms.append(new_peptidoform)
         return new_peptidoforms
@@ -285,21 +281,32 @@ class PSMHandler:
             psm_list, psm_file_type, self.params["modification_mapping"]
         )
         new_psm_list = []
-        num_added_psms = 0
+        total_new_psms = 0
+        mass_shifted_psms = 0
 
-        for psm in track(
-            parsed_psm_list,
-            description="Parsing PSMs in PSMList...",
-            total=len(parsed_psm_list),
-        ):
-            if (psm.is_decoy) & (not generate_modified_decoys):
-                continue
-            new_psms = self._get_modified_peptidoforms(psm, keep_original=keep_original)
-            if new_psms:
-                num_added_psms += len(new_psms) if not keep_original else len(new_psms) - 1
-                new_psm_list.extend(new_psms)
-        if num_added_psms != 0:
-            logger.info(f"Added {num_added_psms} additional modified PSMs")
+        with Progress(
+            SpinnerColumn(),
+            TextColumn("[progress.description]{task.description}"),
+            BarColumn(),
+            TextColumn("{task.completed}/{task.total} PSMs processed"),
+            TimeElapsedColumn(),
+            transient=False,
+        ) as progress:
+
+            task = progress.add_task("Processing PSMs...", total=len(parsed_psm_list))
+            for psm in parsed_psm_list:
+                if (psm.is_decoy) & (not generate_modified_decoys):
+                    progress.update(task, advance=1)
+                    continue
+                new_psms = self._get_modified_peptidoforms(psm, keep_original=keep_original)
+                if new_psms:
+                    total_new_psms += len(new_psms) if not keep_original else len(new_psms) - 1
+                    mass_shifted_psms += 1
+                    new_psm_list.extend(new_psms)
+                progress.update(task, advance=1)
+
+        if total_new_psms != 0:
+            logger.info(f"Added a total of {total_new_psms} on {mass_shifted_psms} different PSMs")
         else:
             logger.warning("No modified PSMs found, ensure open modification search was enabled")
 
@@ -326,7 +333,7 @@ class PSMHandler:
         elif type(psm_list) is str:
             self.psm_file_name = Path(psm_list)
             psm_list = read_file(psm_list, filetype=psm_file_type)
-            psm_list.rename_modifications({"+15.9949": "Oxidation"})
+            psm_list.rename_modifications(modification_mapping)
         elif type(psm_list) is not PSMList:
             raise TypeError("psm_list should be a path to a file or a PSMList object")
 
@@ -361,6 +368,19 @@ class PSMHandler:
         logger.info(f"Writing modified PSM list to {output_file}")
         write_file(psm_list=psm_list, filename=output_file, filetype=psm_file_type)
 
+    @lru_cache(maxsize=None)
+    def cached_process_tag_tokens(self, tag):
+        """
+        Process a tag token and cache the result.
+
+        Args:
+            tag (str): Tag token to process.
+
+        Returns:
+            str: Processed tag token.
+        """
+        return proforma.process_tag_tokens(tag)
+
 
 class _ModificationHandler:
     """Class that handles modifications."""
@@ -385,7 +405,7 @@ class _ModificationHandler:
             exclude_mutations (bool, optional): If True, modifications with the classification 'AA substitution' will be excluded. Defaults to False.
         """
         # TODO add amino acid variations (mutation) as flag
-        self.cache = ModificationCache(
+        self.cache = _ModificationCache(
             combination_length=combination_length,
             exclude_mutations=exclude_mutations,
             modification_file=unimod_modification_file,
@@ -504,7 +524,7 @@ class _ModificationHandler:
             list: List of Modification_candidate([localised_mass_shift])
         """
         expmass = mz_to_mass(psm.precursor_mz, psm.get_precursor_charge())
-        calcmass = calculate_mass(psm.peptidoform.composition)
+        calcmass = psm.peptidoform.theoretical_mass
         mass_shift = expmass - calcmass
 
         # get all potential modifications
@@ -727,7 +747,7 @@ class _ModificationHandler:
         return found_additional_amino_acids
 
 
-class ModificationCache:
+class _ModificationCache:
     """Class that handles the cache for modifications."""
 
     def __init__(
@@ -752,7 +772,7 @@ class ModificationCache:
 
         # Load or generate data
         cache_file = self._get_cache_file_path()
-        self._load_or_generate_data(cache_file)
+        self._load_or_generate_data(cache_file, force_reload=False)
 
     def _get_cache_file_path(self):
         """
@@ -768,12 +788,12 @@ class ModificationCache:
         # Create the cache directory if it doesn't exist
         os.makedirs(cache_dir, exist_ok=True)
 
-        cache_file = os.path.join(cache_dir, "modification_cache.h5")
+        cache_file = os.path.join(cache_dir, "modification_cache.pkl")
         return cache_file
 
-    def _load_or_generate_data(self, cache_file: str) -> None:
+    def _load_or_generate_data(self, cache_file: str, force_reload: bool = False) -> None:
         """Load data from cache or generate and save it if cache doesn't exist."""
-        if os.path.exists(cache_file):
+        if os.path.exists(cache_file) and not force_reload:
             logger.info("Checking cache")
             with open(cache_file, "rb") as f:
                 cache_data = pickle.load(f)
@@ -833,7 +853,7 @@ class ModificationCache:
             monoisotopic_mass = mod.monoisotopic_mass
 
             for specificity in mod.specificities:
-                classification = specificity.classification
+                classification = specificity.classification.classification
 
                 # Skip based on classification
                 if classification == "Isotopic label":

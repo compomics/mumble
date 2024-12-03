@@ -1,0 +1,51 @@
+name: Test and Lint Workflow
+
+on:
+  push:
+    branches:
+      - '*'  
+  pull_request:
+    branches:
+      - main  
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ['3.10', '3.11', '3.12'] 
+
+    steps:
+      # Checkout the code from the repository
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      # Set up Python environment for each version in the matrix
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # Install dependencies
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install .[dev]  # Install both runtime and dev dependencies
+
+      # Run linting with ruff (this will catch print statements)
+      - name: Lint with ruff
+        run: |
+          pip install ruff  # Ensure ruff is available if not installed through dev dependencies
+          ruff check mumble tests  # Lint your package and test directories
+
+      # Run formatting checks with black
+      - name: Check formatting with black
+        run: |
+          pip install black  # Ensure black is available if not installed through dev dependencies
+          black --check .  # Check if code is correctly formatted
+
+      # Run tests with pytest
+      - name: Run tests with pytest
+        run: |
+          pip install pytest
+          pytest --maxfail=1 --disable-warnings -q

@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0.0", "wheel"]
+requires = ["setuptools>=61.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "mumble"
-version = "0.1.2"
+name = "mumble-mod"
+version = "0.2.0"
 description = "Finding the perfect modification for your mass shift"
 readme = "README.md"
 keywords = [
@@ -26,10 +26,10 @@ dependencies = [
     "pyteomics >= 4.7.3",
     "pandas >= 1.5.0",
     "psm_utils >= 0.9.0",
-    "tomli>=2; python_version < '3.11'",
-    "h5py>=3.0.0",
+    "numpy >= 1.23.0",
+    "rustyms >= 0.8.0"
 ]
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 
 [project.optional-dependencies]
 dev = ["ruff", "black", "pytest", "pre-commit", "bumpver"]
@@ -49,7 +49,7 @@ target-version = 'py38'
 extend-select = ["T201", "T203"]
 
 [tool.bumpver]
-current_version = "0.0.1"
+current_version = "0.2.0"
 version_pattern = "MAJOR.MINOR.PATCH"
 commit_message  = "Bump version {old_version} -> {new_version}"
 commit          = true
@@ -58,4 +58,4 @@ push            = false
 
 [tool.bumpver.file_patterns]
 "pyproject.toml" = ['current_version = "{version}"', 'version = "{version}"']
-"mumble/__init__.py" = ["{version}"]
+"mumble/__init__.py" = ['__version__ = "{version}"']

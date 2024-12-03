@@ -1,7 +1,18 @@
 import click
+import logging
+
+from rich.logging import RichHandler
 
 from mumble import PSMHandler
 
+
+# setup logging
+logging.basicConfig(
+    level=logging.INFO,  # Set the logging level
+    format="%(message)s",  # Simple format for logging
+    datefmt="[%X]",  # Time format
+    handlers=[RichHandler(rich_tracebacks=True, show_path=False)],
+)
 
 # Define CLI options as a dictionary
 CLI_OPTIONS = {
