@@ -15,12 +15,11 @@ from functools import partial
 import pandas as pd
 import pickle
 from psm_utils.io import read_file, write_file
-from psm_utils import PSMList, PSM, Peptidoform
+from psm_utils import PSMList
 from psm_utils.utils import mz_to_mass
 from pyteomics import proforma
-from pyteomics.mass import std_aa_mass, calculate_mass, unimod
+from pyteomics.mass import std_aa_mass, unimod
 from pyteomics.fasta import IndexedFASTA
-from rich.progress import track
 from rich.logging import RichHandler
 from rich.progress import Progress, SpinnerColumn, TextColumn, BarColumn, TimeElapsedColumn
 
@@ -419,7 +418,7 @@ class _ModificationHandler:
 
         # Use np.where to get indices of non-False values for each row
         valid_indices = [
-            np.where(mod_array[i] != False)[0].tolist() for i in range(mod_array.shape[0])
+            np.where(mod_array[i] != False)[0].tolist() for i in range(mod_array.shape[0])  # NOQA
         ]
         # generate all possible combinations of indices
         valid_combinations = [
