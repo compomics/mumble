@@ -405,7 +405,7 @@ class _ModificationHandler:
             exclude_mutations (bool, optional): If True, modifications with the classification 'AA substitution' will be excluded. Defaults to False.
         """
         # TODO add amino acid variations (mutation) as flag
-        self.cache = ModificationCache(
+        self.cache = _ModificationCache(
             combination_length=combination_length,
             exclude_mutations=exclude_mutations,
             modification_file=unimod_modification_file,
@@ -747,7 +747,7 @@ class _ModificationHandler:
         return found_additional_amino_acids
 
 
-class ModificationCache:
+class _ModificationCache:
     """Class that handles the cache for modifications."""
 
     def __init__(
