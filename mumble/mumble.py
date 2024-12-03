@@ -772,7 +772,7 @@ class ModificationCache:
 
         # Load or generate data
         cache_file = self._get_cache_file_path()
-        self._load_or_generate_data(cache_file)
+        self._load_or_generate_data(cache_file, force_reload=False)
 
     def _get_cache_file_path(self):
         """
@@ -788,12 +788,12 @@ class ModificationCache:
         # Create the cache directory if it doesn't exist
         os.makedirs(cache_dir, exist_ok=True)
 
-        cache_file = os.path.join(cache_dir, "modification_cache.h5")
+        cache_file = os.path.join(cache_dir, "modification_cache.pkl")
         return cache_file
 
-    def _load_or_generate_data(self, cache_file: str) -> None:
+    def _load_or_generate_data(self, cache_file: str, force_reload: bool = False) -> None:
         """Load data from cache or generate and save it if cache doesn't exist."""
-        if os.path.exists(cache_file):
+        if os.path.exists(cache_file) and not force_reload:
             logger.info("Checking cache")
             with open(cache_file, "rb") as f:
                 cache_data = pickle.load(f)
@@ -853,7 +853,7 @@ class ModificationCache:
             monoisotopic_mass = mod.monoisotopic_mass
 
             for specificity in mod.specificities:
-                classification = specificity.classification
+                classification = specificity.classification.classification
 
                 # Skip based on classification
                 if classification == "Isotopic label":
