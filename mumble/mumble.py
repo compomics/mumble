@@ -9,6 +9,7 @@ from functools import lru_cache
 
 import pandas as pd
 import pickle
+import platformdirs
 from psm_utils.io import read_file, write_file
 from psm_utils import PSMList, PSM, Peptidoform
 from psm_utils.utils import mz_to_mass
@@ -781,9 +782,7 @@ class _ModificationCache:
         return:
             str: path to cache file
         """
-        current_dir = os.path.dirname(os.path.realpath(__file__))
-        parent_dir = os.path.dirname(current_dir)
-        cache_dir = os.path.join(parent_dir, "modification_cache")
+        cache_dir = platformdirs.user_cache_dir(appname="mumble")
 
         # Create the cache directory if it doesn't exist
         os.makedirs(cache_dir, exist_ok=True)
