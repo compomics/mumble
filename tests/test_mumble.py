@@ -1,13 +1,11 @@
 import os
-
 import pytest
 from unittest.mock import MagicMock
 import pandas as pd
 from collections import namedtuple
 from psm_utils import PSMList, PSM, Peptidoform
-from psm_utils.utils import mz_to_mass
+from psm_utils.io import read_file
 from pyteomics import proforma
-from pyteomics.mass import calculate_mass
 from pyteomics.fasta import IndexedFASTA
 
 from mumble.mumble import _ModificationHandler, PSMHandler
@@ -769,42 +767,69 @@ class TestModificationHandler:
         assert masses == []
         assert combinations == []
 
-    def test_double_combined_modifcations(self):
+    def test_single_combined_modifcations(self):
 
-        mod_handler = _ModificationHandler(combination_length=2)
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        data_file_path = os.path.join(current_dir, "test_data", "unmapped_mass_shift_psms.tsv")
 
-        psm = PSM(
-            peptidoform="VTFTETPENGSKW/2",
-            spectrum_id="some_spectrum",
-            is_decoy=False,
-            protein_list=["some_protein"],
-            precursor_mz="748.8581250320699",
+        psm_list_unmapped_psms = read_file(data_file_path, filetype="sage")
+
+        psm_handler = PSMHandler(
+            aa_combinations=0,
+            fasta_file=None,
+            mass_error=0.02,
+            exclude_mutations=True,
+            combination_length=1,
         )
 
-        localized_modifications = mod_handler.localize_mass_shift(psm)
-        name_to_mass_dict = mod_handler.name_to_mass_residue_dict
+        mapped_psms = psm_handler.add_modified_psms(
+            psm_list_unmapped_psms, keep_original=False, generate_modified_decoys=False
+        )
 
-        expmass = mz_to_mass(psm.precursor_mz, psm.get_precursor_charge())
-        calcmass = calculate_mass(psm.peptidoform.composition)
-        mass_shift = expmass - calcmass
+        expected_peptidoforms = [
+            "HSALDMTR[Deamidated]YW",
+            "AAADSAVR[Deamidated]LW",
+            "SVTEIQ[Deamidated]EKW",
+            "Q[Deamidated]YSNNIRQL",
+            "QYSNNIR[Deamidated]QL",
+            "QYSNNIRQ[Deamidated]L",
+            "QYSN[Deamidated]NIRQL",
+            "QYSNN[Deamidated]IRQL",
+            "KSLPAEIN[Deamidated]RM",
+            "KSLPAEINR[Deamidated]M",
+            "KSSEVDN[Deamidated]WRII",
+            "KSSEVDNWR[Deamidated]II",
+            "SK[Dicarbamidomethyl]IDLHKY",
+            "SKIDLHK[Dicarbamidomethyl]Y",
+            "SKIDLH[Dicarbamidomethyl]KY",
+            "[Dicarbamidomethyl]-SKIDLHKY",
+            "[Lys]-VMEIHSKYW",
+        ]
+        assert len(mapped_psms) == 17
+        assert set(expected_peptidoforms) == set(
+            [psm.peptidoform.proforma.split("/")[0] for psm in mapped_psms]
+        )
 
-        for candidate in localized_modifications:
+    def test_double_combined_modifcations(self):
 
-            mass_shift1 = candidate.Localised_mass_shifts[0]
+        current_dir = os.path.dirname(os.path.abspath(__file__))
+        data_file_path = os.path.join(current_dir, "test_data", "unmapped_mass_shift_psms.tsv")
 
-            # no need to check single mod 'combinations'
-            try:
-                mass_shift2 = candidate.Localised_mass_shifts[1]
-            except:  # noqa: E722
-                continue
+        psm_list_unmapped_psms = read_file(data_file_path, filetype="sage")
 
-            sum = (
-                name_to_mass_dict[mass_shift1.modification].mass
-                + name_to_mass_dict[mass_shift2.modification].mass
-            )
+        psm_handler = PSMHandler(
+            aa_combinations=0,
+            fasta_file=None,
+            mass_error=0.02,
+            exclude_mutations=True,
+            combination_length=2,
+        )
 
-            assert mass_shift1.loc != mass_shift2.loc
-            assert sum >= (mass_shift - 0.02) and sum <= (mass_shift + 0.02)
+        mapped_psms = psm_handler.add_modified_psms(
+            psm_list_unmapped_psms, keep_original=False, generate_modified_decoys=False
+        )
+
+        assert len(mapped_psms) == 426
 
 
 if __name__ == "__main__":
